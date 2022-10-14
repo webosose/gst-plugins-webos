@@ -1,5 +1,5 @@
 /* GStreamer Unified Video/Graphic Sink Bin Plugins
- *  
+ * 
  * Copyright (C) 2022 LG Electronics, Inc.
  * Author : Jimmy Ohn <yongjin.ohn@lge.com>
  *          Eunyoung Moon <eunyoung.moon@lge.com>
@@ -9,7 +9,7 @@
  * modify it under the terms of the GNU Library General Public
  * License as published by the Free Software Foundation; either
  * version 2 of the License, or (at your option) any later version.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
@@ -36,12 +36,13 @@ G_BEGIN_DECLS
 #define GST_UNIFIED_SINK_BIN_GET_LOCK(bin) (&((GstUnifiedSinkBin*)(bin))->lock)
 #define GST_UNIFIED_SINK_BIN_LOCK(bin) (g_rec_mutex_lock (GST_UNIFIED_SINK_BIN_GET_LOCK(bin)))
 #define GST_UNIFIED_SINK_BIN_UNLOCK(bin) (g_rec_mutex_unlock (GST_UNIFIED_SINK_BIN_GET_LOCK(bin)))
-typedef struct _GstUnifiedSinkGroup GstUnifiedSinkGroup;
+typedef struct _GstUnifiedSinkBinElementList GstUnifiedSinkBinElementList;
 typedef struct _GstUnifiedSinkBin GstUnifiedSinkBin;
 typedef struct _GstUnifiedSinkBinClass GstUnifiedSinkBinClass;
 
-struct _GstUnifiedSinkGroup
+struct _GstUnifiedSinkBinElementList
 {
+  /* [TODO] manage GSList instead */
   GstElement *valve;
   GstElement *sink;
 };
@@ -50,12 +51,23 @@ struct _GstUnifiedSinkBin
 {
   GstBin parent;
   GRecMutex lock;  /* to protect switching sink */
+
+  /* explicit pointers to stuff used */
+  GstElement *valve;
+  GstElement *sink;
+  GstPad *sink_pad;
+  GstCaps *filter_caps;
+  gboolean sync;
 };
 
 struct _GstUnifiedSinkBinClass
 {
   GstBinClass parent_class;
 };
+
+void        gst_unified_sink_bin_set_sink (GstUnifiedSinkBin * sinkbin, GstElement * sink);
+GstElement* gst_unified_sink_bin_get_sink (GstUnifiedSinkBin * sinkbin);
+
 
 G_END_DECLS
 #endif //  __GST_UNIFIED_SINK_BIN_H__

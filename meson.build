@@ -1,6 +1,6 @@
 unifiedsinkbin_sources = [
   'gstunifiedsinkbin.c',
-  'gstunifiedsinkplugin.c'
+  'gstunifiedsinkbinplugin.c'
 ]
 
 gstunifiedsinkbin= library('gstunifiedsinkbin',

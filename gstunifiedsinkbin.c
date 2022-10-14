@@ -29,35 +29,47 @@
 GST_DEBUG_CATEGORY_STATIC (gst_unifiedsink_bin_debug);
 #define GST_CAT_DEFAULT gst_unifiedsink_bin_debug
 
-static GstStaticPadTemplate pad_template =
-GST_STATIC_PAD_TEMPLATE ("unified_sink%d",
+static GstStaticPadTemplate unifiedsinkbin_pad_template = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
-    GST_PAD_REQUEST,
+    GST_PAD_ALWAYS,
     GST_STATIC_CAPS_ANY);
 
-/* properties */
+/* unifiedsinkbin properties */
 enum
 {
   PROP_0,
+  PROP_VIDEO_SINK,
   PROP_LAST
 };
 
+/* rendering mode */
+enum
+{
+  VIDEO_PLANE_RENDERING,
+  GRAPHIC_PLANE_RENDERING
+};
+
+static void gst_unifiedsink_bin_dispose (GObject * object);
 static void gst_unifiedsink_bin_finalize (GObject * object);
 static void gst_unifiedsink_bin_set_property (GObject * object, guint prop_id,
                                               const GValue * value, GParamSpec * spec);
 static void gst_unifiedsink_bin_get_property (GObject * object, guint prop_id,
-                                              const GValue * value, GParamSpec * spec);
+                                              GValue * value, GParamSpec * spec);
 
 static GstPad *gst_unifiedsink_bin_request_new_pad (GstElement * element, GstPadTemplate * templ,
                                                     const gchar * name, const GstCaps * caps);
 static void gst_unifiedsink_bin_release_request_pad (GstElement * element, GstPad * pad);
 static gboolean gst_unifiedsink_bin_query (GstElement * element, GstQuery * query);
 static gboolean gst_unifiedsink_bin_sink_event (GstPad * pad, GstObject * parent, GstEvent * event);
+static gboolean create_sink_element (GstUnifiedSinkBin *self);
+static void remove_all_element (GstUnifiedSinkBin *self);
 static GstStateChangeReturn gst_unifiedsink_bin_change_state (GstElement * element, GstStateChange transition);
 
 G_DEFINE_TYPE (GstUnifiedSinkBin, gst_unifiedsink_bin, GST_TYPE_BIN);
 
 #define parent_class gst_unifiedsink_bin_parent_class
+#define DEFAULT_SINK "waylandsink"
+#define DEFAULT_RENDER_MODE GRAPHIC_PLANE_RENDERING
 
 static void
 gst_unifiedsink_bin_class_init (GstUnifiedSinkBinClass * klass)
@@ -68,42 +80,93 @@ gst_unifiedsink_bin_class_init (GstUnifiedSinkBinClass * klass)
   gobject_klass = (GObjectClass *) klass;
   gstelement_klass = (GstElementClass *) klass;
 
-  gobject_klass->finalize = gst_unifiedsink_bin_finalize;
   gobject_klass->set_property = gst_unifiedsink_bin_set_property;
   gobject_klass->get_property = gst_unifiedsink_bin_get_property;
+  gobject_klass->dispose = gst_unifiedsink_bin_dispose;
+  gobject_klass->finalize = gst_unifiedsink_bin_finalize;
 
   gst_element_class_add_pad_template (gstelement_klass,
-      gst_static_pad_template_get (&pad_template));
+      gst_static_pad_template_get (&unifiedsinkbin_pad_template));
 
   gst_element_class_set_static_metadata (gstelement_klass,
-      "Unified Sink Bin", "/Bin/UnifiedSinkBin",
-      "Unified sink for switching of video/graphic plane rendering",
+      "Unified Sink Bin", "Sink/Video",
+      "Unified sink bin for switching of video/graphic plane rendering",
       "Jimmy Ohn <yongjin.ohn@lge.com>, Eunyoung Moon <eunyoung.moon@lge.com>, Amy Ko <amy.ko@lge.com>");
-
+/*
   gstelement_klass->request_new_pad =
       GST_DEBUG_FUNCPTR (gst_unifiedsink_bin_request_new_pad);
   gstelement_klass->release_pad =
       GST_DEBUG_FUNCPTR (gst_unifiedsink_bin_release_request_pad);
+*/
   gstelement_klass->query = GST_DEBUG_FUNCPTR (gst_unifiedsink_bin_query);
   gstelement_klass->change_state = GST_DEBUG_FUNCPTR (gst_unifiedsink_bin_change_state);
+
+  g_object_class_install_property (gobject_klass, PROP_VIDEO_SINK,
+      g_param_spec_object ("video-sink", "Video Sink",
+          "the video output element to use (NULL = default sink)",
+          GST_TYPE_ELEMENT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  GST_DEBUG_CATEGORY_INIT (gst_unifiedsink_bin_debug, "unifiedsinkbin", 0, "Unified Sink Bin");
 }
 
 static void
 gst_unifiedsink_bin_init (GstUnifiedSinkBin * unifiedsinkbin)
 {
-   GST_DEBUG_CATEGORY_INIT (gst_unifiedsink_bin_debug, "unifiedsinkbin", 0, "Unified Sink Bin");
+   GstPad *valve_sink_pad, *src_pad;
+   GstPad *ghost_pad;
+   GstPadTemplate *pad_template;
    /* instance initialization */
    g_rec_mutex_init (&unifiedsinkbin->lock);
+
+   /* create the valve element only once */
+   unifiedsinkbin->valve = gst_element_factory_make ("valve", NULL);
+   if (!unifiedsinkbin->valve) {
+     GST_WARNING_OBJECT (unifiedsinkbin, "Can't create valve element, Unifiedsinkbin will not work. \
+         please make sure valve element in registry!");
+     return;
+   }
+   
+   gst_bin_add (GST_BIN(unifiedsinkbin), unifiedsinkbin->valve);
+
+   /* get sinkpad of valve element */
+   valve_sink_pad = gst_element_get_static_pad (unifiedsinkbin->valve, "sink");
+
+   /* get pad template */
+   pad_template = gst_static_pad_template_get (&unifiedsinkbin_pad_template);
+
+   /* create ghost sink pad in unifiedsinkbin */
+   unifiedsinkbin->sink_pad = gst_ghost_pad_new_from_template ("sink", valve_sink_pad, pad_template);
+   gst_pad_set_active (unifiedsinkbin->sink_pad, TRUE);
+   gst_element_add_pad (GST_ELEMENT (unifiedsinkbin), unifiedsinkbin->sink_pad);
+
+   gst_object_unref (pad_template);
+   gst_object_unref (valve_sink_pad);
+
+   gst_pad_set_event_function (GST_PAD_CAST (unifiedsinkbin->sink_pad),
+       GST_DEBUG_FUNCPTR (gst_unifiedsink_bin_sink_event));
+
+   //-----------------------------------------------------------------------------------------------//
+
+   GST_OBJECT_FLAG_SET (unifiedsinkbin, GST_BIN_FLAG_STREAMS_AWARE);
 }
 
 static void
-gst_unifiedsink_bin_finalize (GObject * obj)
+gst_unifiedsink_bin_dispose (GObject * object)
+{
+  GstUnifiedSinkBin *unifiedsinkbin = GST_UNIFIED_SINK_BIN (object);
+
+  remove_all_element (unifiedsinkbin);
+
+  G_OBJECT_CLASS (parent_class)->dispose ((GObject *) unifiedsinkbin);
+}
+
+static void
+gst_unifiedsink_bin_finalize (GObject * object)
 {
   /* instance finalize */
-  GstUnifiedSinkBin *unifiedsinkbin;
-  unifiedsinkbin = GST_UNIFIED_SINK_BIN (obj);
+  GstUnifiedSinkBin *unifiedsinkbin = GST_UNIFIED_SINK_BIN (object);
   g_rec_mutex_clear (&unifiedsinkbin->lock);
-  G_OBJECT_CLASS (parent_class)->finalize (obj);
+  G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
 static GstPad *
@@ -132,10 +195,15 @@ gst_unifiedsink_bin_release_request_pad (GstElement * element, GstPad * pad)
 
 static void
 gst_unifiedsink_bin_get_property (GObject * object, guint prop_id,
-                                    const GValue * value, GParamSpec * spec)
+                                  GValue * value, GParamSpec * spec)
 {
+  GstUnifiedSinkBin *unifiedsinkbin = GST_UNIFIED_SINK_BIN (object);
   /* will be impelemented */
   switch (prop_id) {
+    case PROP_VIDEO_SINK:
+//      g_value_set_object (value, unifiedsinkbin->sink);
+//      g_value_take_object (value, unifiedsinkbin->sink);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, spec);
       break;
@@ -144,10 +212,12 @@ gst_unifiedsink_bin_get_property (GObject * object, guint prop_id,
 
 static void
 gst_unifiedsink_bin_set_property (GObject * object, guint prop_id,
-                                    const GValue * value, GParamSpec * spec)
+                                  const GValue * value, GParamSpec * spec)
 {
   /* will be impelemented */
   switch (prop_id) {
+    case PROP_VIDEO_SINK:
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, spec);
       break;
@@ -175,6 +245,7 @@ gst_unifiedsink_bin_query (GstElement * element, GstQuery * query)
 static gboolean
 gst_unifiedsink_bin_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
+  GST_DEBUG_OBJECT (pad, "got event %" GST_PTR_FORMAT, event);
   /* will be impelemented */
   switch (event->type) {
      case GST_EVENT_CAPS: {
@@ -192,10 +263,18 @@ gst_unifiedsink_bin_change_state (GstElement * element, GstStateChange transitio
 {
   /* will be impelemented */
   GstStateChangeReturn ret = GST_STATE_CHANGE_SUCCESS;
-  GstUnifiedSinkBin *sink = GST_UNIFIED_SINK_BIN (element);
+  GstUnifiedSinkBin *unifiedsinkbin = GST_UNIFIED_SINK_BIN (element);
+  gboolean result = FALSE;
 
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
+      result = create_sink_element (unifiedsinkbin);
+
+      if (!result) {
+        GST_WARNING_OBJECT (unifiedsinkbin, "Failed to create sink element!");
+        return GST_STATE_CHANGE_FAILURE;
+      }
+
       break;
     default:
       break;
@@ -207,6 +286,8 @@ gst_unifiedsink_bin_change_state (GstElement * element, GstStateChange transitio
 
   switch (transition) {
     case GST_STATE_CHANGE_READY_TO_NULL:
+      gst_element_set_state (unifiedsinkbin->valve, GST_STATE_NULL);
+      gst_element_set_state (unifiedsinkbin->sink, GST_STATE_NULL);
       break;
     default:
       break;
@@ -215,3 +296,80 @@ gst_unifiedsink_bin_change_state (GstElement * element, GstStateChange transitio
   return ret;
 }
 
+static gboolean
+create_sink_element (GstUnifiedSinkBin *sinkbin)
+{
+  gboolean ret = FALSE;
+
+  if (!sinkbin->valve) {
+    GST_WARNING_OBJECT (sinkbin, "Valve element is not created. please make sure that valve element is created");
+    return ret;
+  }
+
+  sinkbin->sink = gst_element_factory_make ("waylandsink", NULL);
+
+  if (!sinkbin->sink) {
+    GST_WARNING_OBJECT (sinkbin, "Can't create sink. please make sure that whether sink element exist in registry");
+    return ret;
+  }
+
+  ret = gst_bin_add (GST_BIN(sinkbin), sinkbin->sink);
+
+  if (!ret) {
+    GST_WARNING_OBJECT (sinkbin, "Can't be added sink element in unifiedsinkbin!");
+    return ret;
+  }
+
+  ret = gst_element_link (sinkbin->valve, sinkbin->sink);
+
+  if (!ret) {
+    GST_WARNING_OBJECT (sinkbin, "Can't be linked valve and sink element!");
+    return ret;
+  }
+
+  return ret;
+}
+
+static void
+remove_all_element (GstUnifiedSinkBin *sinkbin)
+{
+  GST_UNIFIED_SINK_BIN_LOCK (sinkbin);
+
+  /* remove ghost pad in unifiedsinkbin */
+  if (sinkbin->sink_pad) {
+    gst_pad_set_element_private (sinkbin->sink_pad, NULL);
+    gst_pad_set_active (sinkbin->sink_pad, FALSE);
+    gst_element_remove_pad (GST_ELEMENT_CAST (sinkbin), sinkbin->sink_pad);
+  }
+
+  /* remove valve element */
+  if (sinkbin->valve) {
+    gst_element_set_state (sinkbin->valve, GST_STATE_NULL);
+    gst_bin_remove (GST_BIN (sinkbin), sinkbin->valve);
+    sinkbin->valve = NULL;
+  }
+
+  /* remove sink element */
+  if (sinkbin->sink) {
+    gst_element_set_state (sinkbin->sink, GST_STATE_NULL);
+    gst_bin_remove (GST_BIN (sinkbin), sinkbin->sink);
+    sinkbin->sink = NULL;
+  }
+
+  GST_UNIFIED_SINK_BIN_UNLOCK (sinkbin);
+}
+
+
+void
+gst_unified_sink_bin_set_sink (GstUnifiedSinkBin * sinkbin, GstElement * sink) 
+{
+  /* will be impelemented */
+
+}
+
+GstElement* gst_unified_sink_bin_get_sink (GstUnifiedSinkBin * sinkbin)
+{
+  /* will be impelemented */
+  GstElement* sink;
+  return sink;
+}
