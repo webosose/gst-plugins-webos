@@ -47,6 +47,13 @@ struct _GstUnifiedSinkBinElementList
   GstElement *sink;
 };
 
+typedef enum
+{
+  GST_UNIFIEDSINK_RENDER_TYPE_UNKNOWN,
+  GST_UNIFIEDSINK_RENDER_TYPE_VIDEO,
+  GST_UNIFIEDSINK_RENDER_TYPE_GRAPHIC
+} GstUnifiedSinkRenderType;
+
 struct _GstUnifiedSinkBin
 {
   GstBin parent;
@@ -58,11 +65,16 @@ struct _GstUnifiedSinkBin
   GstPad *sink_pad;
   GstCaps *filter_caps;
   gboolean sync;
+  GstUnifiedSinkRenderType render_type;
 };
 
 struct _GstUnifiedSinkBinClass
 {
   GstBinClass parent_class;
+
+  /* unifiedsinkbin signals */
+  void (*sink_element_added)   (GstUnifiedSinkBin *bin, GstElement *child);
+  void (*sink_element_removed) (GstUnifiedSinkBin *bin, GstElement *child);
 };
 
 void        gst_unified_sink_bin_set_sink (GstUnifiedSinkBin * sinkbin, GstElement * sink);
