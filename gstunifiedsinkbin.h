@@ -61,11 +61,14 @@ struct _GstUnifiedSinkBin
 
   /* explicit pointers to stuff used */
   GstElement *valve;
+  GstElement *convert;
   GstElement *sink;
   GstPad *sink_pad;
   GstCaps *filter_caps;
   gboolean sync;
   GstUnifiedSinkRenderType render_type;
+  gulong element_added_id;
+  gulong element_removed_id;
 };
 
 struct _GstUnifiedSinkBinClass
