@@ -310,9 +310,11 @@ gst_unifiedsink_bin_get_property (GObject * object, guint prop_id,
 //      g_value_take_object (value, unifiedsinkbin->sink);
       break;
     case PROP_RENDER_TYPE:
+      GST_UNIFIED_SINK_BIN_LOCK (unifiedsinkbin);
       GST_DEBUG_OBJECT (unifiedsinkbin, "Current Render type[%s] in unifiedsinkbin",
           unifiedsinkbin->render_type == GST_UNIFIEDSINK_RENDER_TYPE_VIDEO ? "Video" : "Graphic");
       g_value_set_uint (value, unifiedsinkbin->render_type);
+      GST_UNIFIED_SINK_BIN_UNLOCK (unifiedsinkbin);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, spec);
@@ -723,4 +725,57 @@ print_for_debugging(GstUnifiedSinkBin *unifiedsinkbin)
     GST_DEBUG_OBJECT (unifiedsinkbin, "Sink element is NOT created!");
   }
   GST_DEBUG_OBJECT (unifiedsinkbin, "---------------------------------------------------------------------");
+}
+
+
+void gst_unified_sink_bin_set_render_type (GstUnifiedSinkBin *unifiedsinkbin, GstUnifiedSinkRenderType render_type)
+{
+  guint type = 0;
+  gboolean ret = FALSE;
+  gchar *origin_sink_name = NULL;
+  gchar *new_sink_name = NULL;
+
+  GST_UNIFIED_SINK_BIN_LOCK (unifiedsinkbin);
+
+  origin_sink_name = gst_element_get_name (unifiedsinkbin->sink);
+
+  if (unifiedsinkbin->render_type == render_type) {
+    GST_DEBUG_OBJECT (unifiedsinkbin, "Same Render type[%s], Sink Element[%s]",
+        render_type == GST_UNIFIEDSINK_RENDER_TYPE_VIDEO ? "Video" : "Graphic", origin_sink_name);
+    g_free(origin_sink_name);
+    GST_UNIFIED_SINK_BIN_UNLOCK (unifiedsinkbin);
+    return;
+  }
+
+  GST_DEBUG_OBJECT (unifiedsinkbin, "Setting Render type[%s], Original Sink Element[%s]",
+        render_type == GST_UNIFIEDSINK_RENDER_TYPE_VIDEO ? "Video" : "Graphic", origin_sink_name);
+
+  ret = gst_unifiedsink_bin_switch_sink_element (unifiedsinkbin, render_type);
+
+  if (!ret) {
+    g_free(origin_sink_name);
+    GST_UNIFIED_SINK_BIN_UNLOCK (unifiedsinkbin);
+    return;
+  }
+
+  new_sink_name = gst_element_get_name (unifiedsinkbin->sink);
+  GST_DEBUG_OBJECT (unifiedsinkbin, "Setting done! Render type[%s], New Sink Element[%s]",
+      render_type == GST_UNIFIEDSINK_RENDER_TYPE_VIDEO ? "Video" : "Graphic", new_sink_name);
+  g_free(origin_sink_name);
+  g_free(new_sink_name);
+
+  GST_UNIFIED_SINK_BIN_UNLOCK (unifiedsinkbin);
+}
+
+GstUnifiedSinkRenderType gst_unified_sink_bin_get_render_type (GstUnifiedSinkBin *unifiedsinkbin)
+{
+  GstUnifiedSinkRenderType render_type = GST_UNIFIEDSINK_RENDER_TYPE_UNKNOWN;
+  GST_UNIFIED_SINK_BIN_LOCK (unifiedsinkbin);
+  GST_DEBUG_OBJECT (unifiedsinkbin, "Current Render type[%s] in unifiedsinkbin",
+      unifiedsinkbin->render_type == GST_UNIFIEDSINK_RENDER_TYPE_VIDEO ? "Video" : "Graphic");
+
+  render_type = unifiedsinkbin->render_type;
+
+  GST_UNIFIED_SINK_BIN_UNLOCK (unifiedsinkbin);
+  return render_type;
 }

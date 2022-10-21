@@ -83,6 +83,11 @@ struct _GstUnifiedSinkBinClass
 void        gst_unified_sink_bin_set_sink (GstUnifiedSinkBin * sinkbin, GstElement * sink);
 GstElement* gst_unified_sink_bin_get_sink (GstUnifiedSinkBin * sinkbin);
 
+/* MT safe */
+void gst_unified_sink_bin_set_render_type (GstUnifiedSinkBin *unifiedsinkbin, GstUnifiedSinkRenderType render_type);
+/* MT safe */
+GstUnifiedSinkRenderType gst_unified_sink_bin_get_render_type (GstUnifiedSinkBin *unifiedsinkbin);
+
 
 G_END_DECLS
 #endif //  __GST_UNIFIED_SINK_BIN_H__
