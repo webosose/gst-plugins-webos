@@ -1,0 +1,7 @@
+*~
+*.bak
+
+
+#Meson
+/build
+/subprojects
