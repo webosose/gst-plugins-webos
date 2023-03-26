@@ -46,9 +46,10 @@ typedef struct _GstUnifiedSinkBinClass GstUnifiedSinkBinClass;
 
 typedef enum
 {
-  GST_UNIFIEDSINK_RENDER_TYPE_UNKNOWN,
+  GST_UNIFIEDSINK_RENDER_TYPE_FAKE,
   GST_UNIFIEDSINK_RENDER_TYPE_VIDEO,
-  GST_UNIFIEDSINK_RENDER_TYPE_GRAPHIC
+  GST_UNIFIEDSINK_RENDER_TYPE_GRAPHIC,
+  GST_UNIFIEDSINK_RENDER_TYPE_FILE,
 } GstUnifiedSinkRenderType;
 
 struct _GstUnifiedSinkBin
@@ -57,6 +58,7 @@ struct _GstUnifiedSinkBin
   GRecMutex lock;  /* to protect switching sink */
 
   /* explicit pointers to stuff used */
+  GstElement *valve;
   GstElement *convert;
   GstElement *sink;
   GstPad *sink_pad;
@@ -65,6 +67,12 @@ struct _GstUnifiedSinkBin
   GstUnifiedSinkRenderType render_type;
   gulong element_added_id;
   gulong element_removed_id;
+
+  //for test
+  pthread_t tTest_switch_thread;
+  gboolean bTest_switch_sink;
+  gboolean bTest_thread_start;
+
 };
 
 struct _GstUnifiedSinkBinClass
@@ -75,15 +83,6 @@ struct _GstUnifiedSinkBinClass
   void (*sink_element_added)   (GstUnifiedSinkBin *bin, GstElement *child);
   void (*sink_element_removed) (GstUnifiedSinkBin *bin, GstElement *child);
 };
-
-GstElement* gst_unified_sink_bin_get_sink (GstUnifiedSinkBin * sinkbin);
-
-/* MT safe */
-void gst_unified_sink_bin_set_render_type (GstUnifiedSinkBin *unifiedsinkbin, GstUnifiedSinkRenderType render_type);
-/* MT safe */
-GstUnifiedSinkRenderType gst_unified_sink_bin_get_render_type (GstUnifiedSinkBin *unifiedsinkbin);
-
-
 G_END_DECLS
 #endif //  __GST_UNIFIED_SINK_BIN_H__
 
