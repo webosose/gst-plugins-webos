@@ -159,6 +159,7 @@ machine = get_option('machine')
 cdata.set('HAVE_MACHINE', 0)
 if machine == 'qemux86'
   cdata.set('MACHINE', 'emul')
+  cdata.set_quoted('DEFAULT_SINK', 'waylandsink')
 elif machine == 'o22'
   cdata.set('PLATFORM_SIC', 1)
   cdata.set_quoted('DEFAULT_SINK', 'lxvideosink')
