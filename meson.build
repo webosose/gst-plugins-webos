@@ -1,5 +1,5 @@
 project('gst-plugins-webos', 'c',
-  version : '1.18.5',
+  version : '1.0.0',
   meson_version : '>= 0.48',
   default_options : [ 'warning_level=1',
                       'buildtype=debugoptimized' ])
@@ -156,40 +156,12 @@ cdata.set_quoted('LOCALEDIR', join_paths(get_option('prefix'), get_option('local
 
 # define platform to find proper gstcool.conf
 machine = get_option('machine')
-cdata.set('HAVE_MACHINE', 0)
-if machine == 'qemux86'
-  cdata.set('MACHINE', 'emul')
-  cdata.set_quoted('DEFAULT_SINK', 'waylandsink')
-elif machine == 'o22'
-  cdata.set('PLATFORM_SIC', 1)
+cdata.set('MACHINE', machine)
+cdata.set_quoted('DEFAULT_SINK', 'waylandsink')
+
+if machine == 'o22'
   cdata.set_quoted('DEFAULT_SINK', 'lxvideosink')
-else
-  cdata.set_quoted('DEFAULT_SINK', 'waylandsink')
-  cdata.set('MACHINE', 'default')
 endif
-
-check_platform = [
-  ['h'],
-  ['m'],
-  ['lm'],
-  ['k'],
-  ['o'],
-  ['e'],
-  ['ra'],
-  ['ah']
-]
-
-foreach p : check_platform
-  if machine.startswith(p.get(0))
-    cdata.set('MACHINE', machine)
-    cdata.set('HAVE_MACHINE', 1)
-    break
-  endif
-endforeach
-message('HAVE_MACHINE: @0@, MACHINE: @1@'.format(cdata.get('HAVE_MACHINE'), cdata.get('MACHINE')))
-
-cdata.set('MACHINE_CONF_DATA', cdata.get('MACHINE') + '/gstcool.conf')
-message('machine conf data : ' + cdata.get('MACHINE_CONF_DATA'))
 
 # GStreamer package name and origin url
 gst_package_name = get_option('package-name')
@@ -235,8 +207,6 @@ if pmlog_dep.found()
   cdata.set('USE_PMLOG', 1)
 endif
 
-# FIXME: migrate the implementation of DEFAULT_PUPPET_AUDIO_FORMAT in configure.ac
-cdata.set_quoted('DEFAULT_PUPPET_AUDIO_FORMAT', 'S32LE')
 
 # External deps
 gio_dep = dependency('gio-2.0', fallback: ['glib', 'libgio_dep'])
