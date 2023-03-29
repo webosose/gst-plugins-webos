@@ -143,6 +143,7 @@ gst_unifiedsink_bin_init (GstUnifiedSinkBin * unifiedsinkbin)
   unifiedsinkbin->render_type = DEFAULT_RENDER_TYPE;
   unifiedsinkbin->element_added_id = 0;
   unifiedsinkbin->element_removed_id = 0;
+  unifiedsinkbin->sink = NULL;
 
   /* create the valve element only once */
   gst_unifiedsink_bin_create_valve_element (unifiedsinkbin);
@@ -297,7 +298,7 @@ gst_unifiedsink_bin_set_property (GObject * object, guint prop_id,
       guint render_type = g_value_get_uint(value);
       GST_DEBUG_OBJECT(unifiedsinkbin, "Setting Render type[%s] in unifiedsinkbin",
                        get_render_type_to_string(render_type));
-      if(render_type == unifiedsinkbin->render_type ) break;
+      if(render_type == unifiedsinkbin->render_type && unifiedsinkbin->sink) break;
       unifiedsinkbin->render_type = render_type;
       gst_unifiedsink_bin_create_sink_element(unifiedsinkbin);
       break;
