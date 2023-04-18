@@ -138,12 +138,14 @@ gst_unifiedsink_bin_init (GstUnifiedSinkBin * unifiedsinkbin)
   /* instance initialization */
   g_rec_mutex_init (&unifiedsinkbin->lock);
 
+  GST_UNIFIED_SINK_BIN_LOCK(unifiedsinkbin);
   unifiedsinkbin->bTest_switch_sink = FALSE;
+  unifiedsinkbin->sink = NULL;
+  GST_UNIFIED_SINK_BIN_UNLOCK(unifiedsinkbin);
   unifiedsinkbin->bTest_thread_start = FALSE;
   unifiedsinkbin->render_type = DEFAULT_RENDER_TYPE;
   unifiedsinkbin->element_added_id = 0;
   unifiedsinkbin->element_removed_id = 0;
-  unifiedsinkbin->sink = NULL;
 
   /* create the valve element only once */
   gst_unifiedsink_bin_create_valve_element (unifiedsinkbin);
@@ -163,7 +165,7 @@ gst_unifiedsink_bin_init (GstUnifiedSinkBin * unifiedsinkbin)
   }
 
   /* link valve and convert element */
-  if (gst_element_link(unifiedsinkbin->valve, unifiedsinkbin->convert)) {
+  if (!gst_element_link(unifiedsinkbin->valve, unifiedsinkbin->convert)) {
     GST_WARNING_OBJECT(unifiedsinkbin, "Can't be linked valve and convert element!");
     return;
   }
@@ -386,14 +388,14 @@ gst_unifiedsink_bin_change_state(GstElement *element, GstStateChange transition)
                    gst_element_state_get_name(GST_STATE_TRANSITION_NEXT(transition)));
   switch (transition) {
      case GST_STATE_CHANGE_NULL_TO_READY: {
-       if (!unifiedsinkbin->sink) {
-        GST_DEBUG_OBJECT(unifiedsinkbin, "Sink element not created, try " DEFAULT_SINK);
-        gst_unifiedsink_bin_create_sink_element(unifiedsinkbin);
-       }
        print_for_debugging(unifiedsinkbin);
        break;
      }
      case GST_STATE_CHANGE_READY_TO_PAUSED: {
+       if (!unifiedsinkbin->sink) {
+        GST_DEBUG_OBJECT(unifiedsinkbin, "Sink element not created, try " DEFAULT_SINK);
+        gst_unifiedsink_bin_create_sink_element(unifiedsinkbin);
+       }
        print_for_debugging(unifiedsinkbin);
        break;
      }
