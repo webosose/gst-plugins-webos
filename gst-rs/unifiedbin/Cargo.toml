@@ -1,0 +1,22 @@
+[package]
+name = "gst-plugin-unifiedbin"
+version = "1.0.0"
+authors = ["Seungwook Cha <seungwook.cha@lge.com>, Jeehyun Lee <jeehyun.lee@lge.com"]
+repository = "gst-plugins-webos"
+license = "LGPL"
+edition = "2021"
+rust-version = "1.63"
+description = "Unified Bin Plugins"
+
+[dependencies]
+gst = { package = "gstreamer", version = "0.19.1" }
+gst-video = { package = "gstreamer-video", version = "0.19" }
+once_cell = "1.0"
+
+[lib]
+name = "gstrsunifiedbin"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+#[build-dependencies]
+#gst-plugin-version-helper = { version = "0.7", path="../version-helper" }
