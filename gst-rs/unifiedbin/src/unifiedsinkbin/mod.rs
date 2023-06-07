@@ -32,6 +32,16 @@ pub enum UnifiedSinkBinOutput {
     TestDebugCategory = 1,
 }
 
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy, glib::Enum)]
+#[repr(u32)]
+#[enum_type(name = "GstUnifiedSinkRenderType")]
+pub enum GstUnifiedSinkRenderType {
+    GstUnifiedsinkRenderTypeFake = 0,
+    GstUnifiedsinkRenderTypeVideo = 1,
+    GstUnifiedsinkRenderTypeGraphic = 2,
+    GstUnifiedsinkRenderTypeFile = 3,
+}
+
 // The public Rust wrapper type for our element
 glib::wrapper! {
     pub struct UnifiedSinkBin(ObjectSubclass<imp::UnifiedSinkBin>) @extends gst::Bin, gst::Element, gst::Object;
@@ -41,6 +51,9 @@ glib::wrapper! {
 // the name "rsunifiedsinkbin" for being able to instantiate it via e.g.
 // gst::ElementFactory::make().
 pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
+    #[cfg(feature = "doc")]
+    GstUnifiedSinkRenderType::static_type().mark_as_plugin_api(gst::PluginAPIFlags::empty());
+
     gst::Element::register(
         Some(plugin),
         "rsunifiedsinkbin",

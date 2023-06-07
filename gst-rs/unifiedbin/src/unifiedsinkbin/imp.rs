@@ -14,20 +14,24 @@ use gst::subclass::prelude::*;
 use gst_video::VideoChromaMode;
 use std::sync::Mutex;
 use std::ops::Deref;
+use std::thread;
+use std::time; //::Duration;
 
 use once_cell::sync::Lazy;
 
 use super::UnifiedSinkBinOutput;
+use super::GstUnifiedSinkRenderType;
 
 // This module contains the private implementation details of our element
 
 const DEFAULT_OUTPUT_TYPE: UnifiedSinkBinOutput = UnifiedSinkBinOutput::TestPrintln;
+const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType = GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
         "rsunifiedsinkBin",
         gst::DebugColorFlags::empty(),
-        Some("Test UnifiedSinkBin Reporter"),
+        Some("Rust UnifiedSinkBin Reporter"),
     )
 });
 
@@ -41,10 +45,12 @@ pub struct UnifiedSinkBin {
     // change it in the set_property function, which can be called
     // from any thread.
     output_type: Mutex<UnifiedSinkBinOutput>,
+    render_type: Mutex<GstUnifiedSinkRenderType>,
     element_added_id: Mutex<u64>,
     element_removed_id: Mutex<u64>,
     test_switch_sink: Mutex<bool>,
     test_thread_start: Mutex<bool>,
+    thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 // This trait registers our type with the GObject object system and
@@ -82,12 +88,14 @@ impl ObjectSubclass for UnifiedSinkBin {
             .unwrap();
 
         // Create the video sink element.
-        let vsink = gst::ElementFactory::make("waylandsink") //waylandsink / init
-            .name("fake init")
+        let vsink = gst::ElementFactory::make("NULL") //waylandsink / NULL
+            .name("fake element")
             .build().ok();
 
         let videosink = Mutex::new(vsink);
         //let vsink = Mutex::new(gst::Element::NONE);
+
+        let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
 
         // Return an instance of our struct
         Self {
@@ -96,10 +104,12 @@ impl ObjectSubclass for UnifiedSinkBin {
             videosink,
             sinkpad,
             output_type: Mutex::new(UnifiedSinkBinOutput::TestPrintln),
+            render_type,//: Mutex::new(DEFAULT_RENDER_TYPE),
             element_added_id : Mutex::new(0_u64),
             element_removed_id : Mutex::new(0_u64),
             test_switch_sink : Mutex::new(false),
             test_thread_start : Mutex::new(false),
+            thread: Mutex::new(None),
         }
     }
 }
@@ -110,13 +120,21 @@ impl ObjectImpl for UnifiedSinkBin {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
             vec![
-                /*
-                glib::ParamSpecEnum::builder::<UnifiedSinkBinOutput>("testoutput", DEFAULT_OUTPUT_TYPE)
-                    .nick("testOutput")
-                    .blurb("test Defines the output type of the unifiedsinkbin")
-                    .mutable_playing()
+                glib::ParamSpecObject::builder::<gst::Element>("video-sink")
+                    .nick("Video Sink")
+                    .blurb("the video output element to use (NULL = default sink)")
+                    .read_only()
                     .build(),
-                */
+                glib::ParamSpecBoolean::builder("test-switch-sink")
+                    .nick("Test to switch sink")
+                    .blurb("switch between default sink and file sink ")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecEnum::builder::<GstUnifiedSinkRenderType>("render-type", DEFAULT_RENDER_TYPE)
+                    .nick("Render Type")
+                    .blurb("the video output render type (VIDEO/GRAPHIC) to use (NULL = GRAPHIC via wayland sink)if you chanage the render type , must be set before using real sink element")
+                    .readwrite()
+                    .build(),
             ]
         });
 
@@ -127,22 +145,50 @@ impl ObjectImpl for UnifiedSinkBin {
     // at any time from any thread.
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         match pspec.name() {
-            /*
-            "testoutput" => {
-                let mut output_type = self.output_type.lock().unwrap();
-                let new_output_type = value
-                    .get::<UnifiedSinkBinOutput>()
+            "render-type" => {
+                let mut render_type = self.render_type.lock().unwrap();
+                //let mut render_type = self.render_type;
+                let new_render_type = value
+                    .get::<GstUnifiedSinkRenderType>()
                     .expect("test type checked upstream");
                 gst::info!(
                     CAT,
                     imp: self,
                     "test Changing output from {:?} to {:?}",
-                    output_type,
-                    new_output_type
+                    self.render_type,
+                    new_render_type
                 );
-                *output_type = new_output_type;
+                //let temp = &mut render_type;
+                //*temp = new_render_type;
+                if *render_type != new_render_type {
+                    *render_type = new_render_type;
+                    println!("change sink element - start");
+                    drop(render_type);
+                    //Mutex::unlock(render_type);
+                    println!("change sink element - drop(render_type);");
+                    if gst_unifiedsink_bin_create_sink_element(self) == true
+                    {
+                        println!("change sink element - done");
+                    }
+                }
             }
-            */
+            "test-switch-sink" => {
+                let mut test_switch_sink = self.test_switch_sink.lock().unwrap();
+                //let mut test_switch_sink = self.test_switch_sink;
+                let new_test_switch_sink = value
+                    .get::<bool>()
+                    .expect("test type checked upstream");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "test Changing output from {:?} to {:?}",
+                    test_switch_sink,
+                    new_test_switch_sink
+                );
+                //let temp = &mut test_switch_sink;
+                //*temp = new_test_switch_sink;
+                *test_switch_sink = new_test_switch_sink;
+            }
             _ => unimplemented!(),
         }
     }
@@ -151,12 +197,19 @@ impl ObjectImpl for UnifiedSinkBin {
     // at any time from any thread.
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
-            /*
-            "testoutput" => {
-                let output_type = self.output_type.lock().unwrap();
-                output_type.to_value()
+            "render-type" => {
+                let render_type = self.render_type.lock().unwrap();
+                //let render_type = &self.render_type;
+                render_type.to_value()
             }
-            */
+            "video-sink" => {
+                let video_sink = self.videosink.lock().unwrap();
+                video_sink.to_value()
+            }
+            "test-switch-sink" => {
+                let test_switch_sink = self.test_switch_sink.lock().unwrap();
+                test_switch_sink.to_value()
+            }
             _ => unimplemented!(),
         }
     }
@@ -216,6 +269,43 @@ impl ObjectImpl for UnifiedSinkBin {
 
         // Then set the ghost pad targets to the corresponding pads of the valve element.
         self.attach_sinkpad();
+    }
+
+    fn dispose(&self) {
+        /*let mut handles = self.handles.lock().unwrap();
+        if let Some(handles) = handles.take() {
+            #[cfg(unix)]
+            handles.signal.close();
+            handles.thread.join().unwrap();
+        }*/
+
+        println!("[dispose] Release all element in unifiedsinkbin!");
+
+        /* remove ghost pad in unifiedsinkbin */
+        let _ = self.sinkpad.set_active(false);
+        self.obj().remove_pad(&self.sinkpad).unwrap();
+
+        /* remove valve element */
+        let _ = self.valve.set_state(gst::State::Null);
+        self.obj().remove(&self.valve).unwrap();
+
+        /* remove convert element */
+        let _ = self.convert.set_state(gst::State::Null);
+        self.obj().remove(&self.convert).unwrap();
+
+        /* remove sink element */
+        let mut cur_vsink = self.videosink.lock().unwrap();
+        let tmp_vsink = cur_vsink.deref();
+
+        match tmp_vsink {
+            Some(sink) => {
+                let _ = sink.set_state(gst::State::Null);
+                self.obj().remove(sink).unwrap();
+                println!("[dispose] remove sink done");
+            }
+            None => println!("[dispose] sink none"),
+        }
+        println!("[dispose] Release done in unifiedsinkbin!");
     }
 }
 
@@ -286,6 +376,8 @@ impl ElementImpl for UnifiedSinkBin {
     ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
         self.print_for_debugging(transition);
 
+        let mut thread_guard = self.thread.lock().unwrap();
+
         match transition {
             gst::StateChange::NullToReady => { }
             gst::StateChange::ReadyToPaused => {
@@ -304,7 +396,7 @@ impl ElementImpl for UnifiedSinkBin {
                 if has_vsink == false
                 {
                     println!("create sink");
-                    //if gst_unifiedsink_bin_create_sink_element(self) == true
+                    if gst_unifiedsink_bin_create_sink_element(self) == true
                     {
                         println!("create sink element done");
                     }
@@ -313,17 +405,53 @@ impl ElementImpl for UnifiedSinkBin {
             gst::StateChange::PausedToPlaying => {
                 //timer start
                 let t_sw_sink = self.test_switch_sink.lock().unwrap();
-                let t_th_tart = self.test_thread_start.lock().unwrap();
-                if *t_sw_sink == true && *t_th_tart == false
+                let mut t_th_start = self.test_thread_start.lock().unwrap();
+                //if locked_bin.test_switch_sink == true && locked_bin.test_thread_start == false
+                if *t_sw_sink == true && *t_th_start == false
                 {
-                    //locked_bin.test_thread_start = true;
+                    *t_th_start = true;
                     //pthread_create(&unifiedsinkbin->tTest_switch_thread, NULL, switch_sink_loop, (void *)unifiedsinkbin);
-                    //pthread_detach(unifiedsinkbin->tTest_switch_thread);
+                    let imp_weak = self.downgrade();
+                    *thread_guard = Some(thread::spawn(move|| {
+                        //switch_sink_loop(self);
+                        let mut switch_sink: bool = false;
+                        //let SINK_SWITCH_INTERVAL = Duration::new(5, 0);
+
+                        let imp = match imp_weak.upgrade() {
+                            None => return,
+                            Some(imp) => imp,
+                        };
+                        let cur_test_thread_start = imp.test_thread_start.lock().unwrap();
+                        //let tmp_test_thread_start = cur_test_thread_start.deref();
+                        while *cur_test_thread_start{//*(tmp_test_thread_start) {
+                            //glib::usleep(5000000);
+                            thread::sleep(time::Duration::from_millis(5000));
+                            if *cur_test_thread_start{//*(tmp_test_thread_start){
+                                imp.obj().set_property("render-type",
+                                    if switch_sink { DEFAULT_RENDER_TYPE }
+                                    else { GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile } );
+                                switch_sink = !switch_sink;
+                                gst::debug!(CAT, imp: imp, "Switch render_type");
+                                //imp.obj().set_state(gst::State::Playing).unwrap();
+                            }else{
+                                //imp.obj().set_state(gst::State::Paused).unwrap();
+                                gst::debug!(CAT, imp: imp, "Switch Thread canceled");
+                            }
+                        }
+                        gst::debug!(CAT, imp: imp, "Switch Thread Exit");
+                    }));
                     gst::debug!(CAT, imp: self, "Switch Thread start");
                 }
             }
             gst::StateChange::PlayingToPaused => {
+                let mut t_th_start = self.test_thread_start.lock().unwrap();
                 //timer kill
+                if *t_th_start == true {
+                    if let Some(_thread) = self.thread.lock().unwrap().take() {
+                        println!("Switch Thread stop ]");
+                    }
+                    *t_th_start = false;
+                }
             }
             _ => {}
         }
@@ -395,4 +523,97 @@ impl UnifiedSinkBin {
 
         return ret;
     }
+}
+
+fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool{
+    let mut ret: bool = true;
+    let sink_name;
+
+    // set drop property as TRUE in valve element before switching sink
+    sinkbin.valve.set_property("drop", true);
+    /* release sink element first if exist */
+    //if sinkbin.videosink  {
+        //GST_DEBUG_OBJECT(sinkbin, "Remove existing sink element first!");
+        //gst_element_set_state(sinkbin->sink, GST_STATE_NULL);
+    //    let _ = sinkbin.set_state(gst::State::Null);
+        //gst_bin_remove(GST_BIN(sinkbin), sinkbin->sink);
+        //let bin = gst::Bin::default();
+    //    sinkbin.remove(&sinkbin.videosink).unwrap();
+        //sinkbin.videosink = null;
+    //}
+
+
+    // Make Mutex<Option<T>> to T
+    let mut cur_vsink = sinkbin.videosink.lock().unwrap();
+    let tmp_vsink = cur_vsink.deref();
+
+    match tmp_vsink {
+        Some(sink) => {
+            let _ = sink.set_state(gst::State::Null);
+            println!("set state null done");
+            sinkbin.obj().remove(sink).unwrap();
+            println!("remove sink done");
+        }
+        None => println!("sink none"),
+    }
+
+    let r_type = sinkbin.render_type.lock().unwrap();
+    println!("render type: {:?}", r_type);
+    /* create sink element according to render type */
+    /* [TODO] read gstcool.conf or configuration file before creation sink element */
+    match *r_type {
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake =>{
+            sink_name = "fakesink"
+        }
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo =>{
+            sink_name = "glimagesink"
+        }
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic =>{
+            sink_name = "waylandsink"
+        }
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile =>{
+            sink_name = "filesink"
+        }
+        _ => {
+            ret = false;
+            return ret;
+        }
+    }
+
+    println!("sink name { }", sink_name);
+    gst::debug!(CAT, imp: sinkbin, "sink name { }", sink_name);
+    let new_vsink = gst::ElementFactory::make(sink_name)
+            .name(sink_name)
+            .build()//.ok();
+            .unwrap();
+
+    /*match new_vsink {
+        Some(sink) => {
+            println!("new sink name { }", sink_name);
+        }
+        None => println!("Can't create sink. please make sure that whether sink element exist in registry : { }", sink_name),
+    }*/
+
+    //if sinkbin.render_type == GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile
+    if *r_type == GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile
+    {
+        new_vsink.set_property("location", "/tmp/testoutput.yuv");
+        new_vsink.set_property("append", true);
+        new_vsink.set_property("sync", true);
+    }
+
+    // Add the videosink element to the bin.
+    sinkbin.obj().add(&new_vsink).unwrap();
+
+    /* link convert and sink element */
+    sinkbin.convert.link(&new_vsink).unwrap();
+
+    //gst_element_sync_state_with_parent(sinkbin->sink);
+    new_vsink.sync_state_with_parent().unwrap();
+
+    // update videosink to the bin
+    *cur_vsink = Some(new_vsink);
+
+    sinkbin.valve.set_property("drop", false);
+    return ret;
 }
