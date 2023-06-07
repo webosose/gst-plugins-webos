@@ -13,6 +13,7 @@ use gst::prelude::*;
 use gst::subclass::prelude::*;
 use gst_video::VideoChromaMode;
 use std::sync::Mutex;
+use std::ops::Deref;
 
 use once_cell::sync::Lazy;
 
@@ -34,12 +35,16 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 pub struct UnifiedSinkBin {
     valve: gst::Element,
     convert: gst::Element,
-    videosink: gst::Element,
+    videosink: Mutex<Option<gst::Element>>,
     sinkpad: gst::GhostPad,
     // We put the output_type property behind a mutex, as we want
     // change it in the set_property function, which can be called
     // from any thread.
     output_type: Mutex<UnifiedSinkBinOutput>,
+    element_added_id: Mutex<u64>,
+    element_removed_id: Mutex<u64>,
+    test_switch_sink: Mutex<bool>,
+    test_thread_start: Mutex<bool>,
 }
 
 // This trait registers our type with the GObject object system and
@@ -64,23 +69,25 @@ impl ObjectSubclass for UnifiedSinkBin {
 
         // Create the valve element.
         let valve = gst::ElementFactory::make("valve")
-            .name("valve-in-unifiedsinkbin")
+            .name("valve-in-rsunifiedsinkbin")
             .build()
             .unwrap();
 
         // Create the convert element.
         let convert = gst::ElementFactory::make("videoconvert")
-            .name("videoconvert-in-unifiedsinkbin")
+            .name("videoconvert-in-rsunifiedsinkbin")
             .property("n-threads", 4_u32)
             .property("chroma-mode", VideoChromaMode::None)
             .build()
             .unwrap();
 
-        // Create the convert element.
-        let videosink = gst::ElementFactory::make("waylandsink")
-            .name("waylandsink-in-unifiedsinkbin")
-            .build()
-            .unwrap();
+        // Create the video sink element.
+        let vsink = gst::ElementFactory::make("waylandsink") //waylandsink / init
+            .name("fake init")
+            .build().ok();
+
+        let videosink = Mutex::new(vsink);
+        //let vsink = Mutex::new(gst::Element::NONE);
 
         // Return an instance of our struct
         Self {
@@ -89,6 +96,10 @@ impl ObjectSubclass for UnifiedSinkBin {
             videosink,
             sinkpad,
             output_type: Mutex::new(UnifiedSinkBinOutput::TestPrintln),
+            element_added_id : Mutex::new(0_u64),
+            element_removed_id : Mutex::new(0_u64),
+            test_switch_sink : Mutex::new(false),
+            test_thread_start : Mutex::new(false),
         }
     }
 }
@@ -99,11 +110,13 @@ impl ObjectImpl for UnifiedSinkBin {
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
             vec![
+                /*
                 glib::ParamSpecEnum::builder::<UnifiedSinkBinOutput>("testoutput", DEFAULT_OUTPUT_TYPE)
                     .nick("testOutput")
                     .blurb("test Defines the output type of the unifiedsinkbin")
                     .mutable_playing()
                     .build(),
+                */
             ]
         });
 
@@ -114,6 +127,7 @@ impl ObjectImpl for UnifiedSinkBin {
     // at any time from any thread.
     fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
         match pspec.name() {
+            /*
             "testoutput" => {
                 let mut output_type = self.output_type.lock().unwrap();
                 let new_output_type = value
@@ -128,6 +142,7 @@ impl ObjectImpl for UnifiedSinkBin {
                 );
                 *output_type = new_output_type;
             }
+            */
             _ => unimplemented!(),
         }
     }
@@ -136,12 +151,32 @@ impl ObjectImpl for UnifiedSinkBin {
     // at any time from any thread.
     fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
         match pspec.name() {
+            /*
             "testoutput" => {
                 let output_type = self.output_type.lock().unwrap();
                 output_type.to_value()
             }
+            */
             _ => unimplemented!(),
         }
+    }
+
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
+            vec![
+                glib::subclass::Signal::builder("sink-element-added")
+                    .run_first()
+                    .param_types([gst::Element::static_type()])
+                    .build(),
+
+                glib::subclass::Signal::builder("sink-element-removed")
+                    .run_first()
+                    .param_types([gst::Element::static_type()])
+                    .build(),
+            ]
+        });
+
+        SIGNALS.as_ref()
     }
 
     // Called right after construction of a new instance
@@ -160,22 +195,27 @@ impl ObjectImpl for UnifiedSinkBin {
         // Add the convert element to the bin.
         obj.add(&self.convert).unwrap();
 
-        // Add the videosink element to the bin.
-        obj.add(&self.videosink).unwrap();
-
         // Link valve to convert
         self.valve.link(&self.convert).unwrap();
 
-        // Link convert to videosink
-        self.convert.link(&self.videosink).unwrap();
+        // Make Mutex<Option<T>> to T
+        let cur_vsink = self.videosink.lock().unwrap();
+        let tmp_vsink = cur_vsink.deref();
+        //print_type_of(&vvsink);
+
+        match tmp_vsink {
+            Some(sink) => {
+                // Add the videosink element to the bin.
+                obj.add(sink).unwrap();
+
+                // Link convert to videosink
+                self.convert.link(sink).unwrap();
+            }
+            None => println!("sink none"),
+        }
 
         // Then set the ghost pad targets to the corresponding pads of the valve element.
-        self.sinkpad
-            .set_target(Some(&self.valve.static_pad("sink").unwrap()))
-            .unwrap();
-
-        // And finally add the two ghostpads to the bin.
-        obj.add_pad(&self.sinkpad).unwrap();
+        self.attach_sinkpad();
     }
 }
 
@@ -224,6 +264,72 @@ impl ElementImpl for UnifiedSinkBin {
 
         PAD_TEMPLATES.as_ref()
     }
+
+    fn query(&self, query: &mut gst::QueryRef) -> bool {
+        use gst::QueryViewMut;
+        let mut ret : bool = true;
+
+        match query.view_mut() {
+            QueryViewMut::Position(ref mut q) => {
+                //println!("query - position called {:?}", query);
+                ret = false;
+            }
+            _ => { ret = ElementImplExt::parent_query(self, query) }
+        }
+
+        return ret;
+    }
+
+    fn change_state(
+        &self,
+        transition: gst::StateChange,
+    ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        self.print_for_debugging(transition);
+
+        match transition {
+            gst::StateChange::NullToReady => { }
+            gst::StateChange::ReadyToPaused => {
+                //gst_unifiedsink_bin_create_sink_element(self);
+
+                let cur_vsink = self.videosink.lock().unwrap();
+                let mut has_vsink : bool = true;
+                match &*cur_vsink {
+                    Some(sink) => {}
+                    None => {
+                        has_vsink = false;
+                    }
+                }
+                drop(cur_vsink);
+
+                if has_vsink == false
+                {
+                    println!("create sink");
+                    //if gst_unifiedsink_bin_create_sink_element(self) == true
+                    {
+                        println!("create sink element done");
+                    }
+                }
+            }
+            gst::StateChange::PausedToPlaying => {
+                //timer start
+                let t_sw_sink = self.test_switch_sink.lock().unwrap();
+                let t_th_tart = self.test_thread_start.lock().unwrap();
+                if *t_sw_sink == true && *t_th_tart == false
+                {
+                    //locked_bin.test_thread_start = true;
+                    //pthread_create(&unifiedsinkbin->tTest_switch_thread, NULL, switch_sink_loop, (void *)unifiedsinkbin);
+                    //pthread_detach(unifiedsinkbin->tTest_switch_thread);
+                    gst::debug!(CAT, imp: self, "Switch Thread start");
+                }
+            }
+            gst::StateChange::PlayingToPaused => {
+                //timer kill
+            }
+            _ => {}
+        }
+
+        self.parent_change_state(transition)
+    }
 }
 
 // Implementation of gst::Bin virtual methods
@@ -256,5 +362,37 @@ impl BinImpl for UnifiedSinkBin {
             }
             _ => self.parent_handle_message(msg),
         }
+    }
+}
+
+impl UnifiedSinkBin {
+    fn print_for_debugging(&self, transition: gst::StateChange) {
+        gst::debug!(CAT, imp: self, "Changing state {:?}", transition);
+    }
+
+    fn attach_sinkpad(&self) -> bool {
+        let mut ret : bool = false;
+
+        // Then set the ghost pad targets to the corresponding pads of the valve element.
+        self.sinkpad
+        .set_target(Some(&self.valve.static_pad("sink").unwrap()))
+        .unwrap();
+
+        self.sinkpad.set_active(true).unwrap();
+
+        self.obj().add_pad(&self.sinkpad).unwrap();
+
+        unsafe {
+            self.sinkpad.set_event_function(|pad, parent, event| match event.view() {
+
+                _ => {
+                    //println!("sinkpad event: {:?}", event);
+                    //gst::debug!(CAT, imp: *pad, "sinkpad event: {:?}", event);
+                    gst::Pad::event_default(pad, parent, event)
+                }
+            });
+        }
+
+        return ret;
     }
 }
