@@ -56,7 +56,7 @@ pub fn register(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
 
     gst::Element::register(
         Some(plugin),
-        "rsunifiedsinkbin",
+        "unifiedsinkbin",
         gst::Rank::Primary,
         UnifiedSinkBin::static_type(),
     )
