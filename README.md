@@ -1,11 +1,7 @@
-Gstreamer Lightweigh Playback
+Gstreamer UnifiedSinkBin
 =============
 
 This is a plugins set to support playback in restrict environment.
-
-More Documentation
-=============
-checkout docs directory
 
 License
 =============
