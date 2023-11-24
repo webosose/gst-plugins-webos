@@ -89,13 +89,31 @@ impl ObjectSubclass for UnifiedSinkBin {
             .build()
             .unwrap();
 
+        let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
+        let sink_name;
+        match *render_type {
+            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake =>{
+                sink_name = "fakesink"
+            }
+            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo =>{
+                sink_name = "glimagesink"
+            }
+            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic =>{
+                sink_name = "waylandsink"
+            }
+            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile =>{
+                sink_name = "filesink"
+            }
+            _ => {
+                ret = false;
+                return ret;
+            }
+        }
         // Create the video sink element.
-        let vsink = gst::ElementFactory::make("NULL")
-            .name("fake element")
+        let vsink = gst::ElementFactory::make(sink_name)
+            .name(sink_name)
             .build().ok();
         let videosink = Mutex::new(vsink);
-
-        let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
 
         // Return an instance of our struct
         Self {
@@ -359,22 +377,7 @@ impl ElementImpl for UnifiedSinkBin {
 
         match transition {
             gst::StateChange::NullToReady => { }
-            gst::StateChange::ReadyToPaused => {
-                let cur_vsink = self.videosink.lock().unwrap();
-                let mut has_vsink : bool = true;
-                match &*cur_vsink {
-                    Some(sink) => {}
-                    None => {
-                        has_vsink = false;
-                    }
-                }
-                drop(cur_vsink);
-
-                if has_vsink == false
-                {
-                    gst_unifiedsink_bin_create_sink_element(self);
-                }
-            }
+            gst::StateChange::ReadyToPaused => { }
             gst::StateChange::PausedToPlaying => {
                 //timer start
                 let t_sw_sink = self.test_switch_sink.lock().unwrap();
