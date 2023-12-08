@@ -88,33 +88,14 @@ impl ObjectSubclass for UnifiedSinkBin {
             .property("chroma-mode", VideoChromaMode::None)
             .build()
             .unwrap();
-
-        let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
-        let sink_name;
-        match *render_type {
-            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake =>{
-                sink_name = "fakesink"
-            }
-            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo =>{
-                sink_name = "glimagesink"
-            }
-            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic =>{
-                sink_name = "waylandsink"
-            }
-            GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile =>{
-                sink_name = "filesink"
-            }
-            _ => {
-                ret = false;
-                return ret;
-            }
-        }
+        
         // Create the video sink element.
-        let vsink = gst::ElementFactory::make(sink_name)
-            .name(sink_name)
+        let vsink = gst::ElementFactory::make("waylandsink")
+            .name("waylandsink")
             .build().ok();
         let videosink = Mutex::new(vsink);
 
+        let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
         // Return an instance of our struct
         Self {
             valve,
