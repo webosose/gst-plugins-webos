@@ -72,6 +72,91 @@ impl ObjectSubclass for UnifiedDecodeBin {
 }
 
 impl ObjectImpl for UnifiedDecodeBin {
+    fn signals() -> &'static [glib::subclass::Signal] {
+        static SIGNALS: Lazy<Vec<glib::subclass::Signal>> = Lazy::new(|| {
+            vec![
+                glib::subclass::Signal::builder("decoder-element-added")
+                    .run_first()
+                    .param_types([gst::Element::static_type()])
+                    // Set the default handler of the signal
+                    .class_handler(|_, args| {
+                        // Get the first argument as an element
+                        let element = args[1].get::<gst::Element>().expect("decoder-element-added signal arg");
+                        // Print the element added log
+                        gst::debug!(CAT,"Element {} is added to bin", element.name());
+                        None
+                    })
+                    .build(),
+
+                glib::subclass::Signal::builder("decoder-element-removed")
+                    .run_first()
+                    .param_types([gst::Element::static_type()])
+                    // Set the default handler of the signal
+                    .class_handler(|_, args| {
+                        // Get the first argument as an element
+                        let element = args[1].get::<gst::Element>().expect("decoder-element-removed signal arg");
+                        // Print the element removed log
+                        gst::debug!(CAT,"Element {} is removed from bin", element.name());
+                        None
+                    })
+                    .build(),
+
+                glib::subclass::Signal::builder("forced-preroll")
+                    .run_last()
+                    .action()
+                    .param_types([bool::static_type()])
+                    // Set the default handler of the signal
+                    .class_handler(|_, args| {
+                        let decodebin = args[0].get::<super::UnifiedDecodeBin>().unwrap();
+                        let imp = decodebin.imp();
+                        // Get the first argument as boolean value
+                        let value: bool = args[1].get::<bool>().expect("forced-preroll error");
+                        // Print the forced-preroll value log
+                        gst::debug!(CAT,"forced-preroll {}", value);
+
+                        imp.decoder.emit_by_name::<()>("forced-preroll", &[&value]);
+                        None
+                    })
+                    .build(),
+
+                glib::subclass::Signal::builder("svp-handle")
+                    .run_first()
+                    .action()
+                    .param_types([u32::static_type()])
+                    // Set the default handler of the signal
+                    .class_handler(|_, args| {
+                        let decodebin = args[0].get::<super::UnifiedDecodeBin>().unwrap();
+                        let imp = decodebin.imp();
+                        // Get the first argument as unsigned int
+                        let value: u32 = args[1].get::<u32>().expect("svp-handle signal arg");
+                        // Print the svp-handle value log
+                        gst::debug!(CAT,"svp-handle {}", value);
+
+                        imp.decoder.emit_by_name::<()>("svp-handle", &[&value]);
+                        None
+                    })
+                    .build(),
+
+                glib::subclass::Signal::builder("corrupted-frame")
+                    .run_first()
+                    .action()
+                    // Set the default handler of the signal
+                    .class_handler(|_, args| {
+                        let decodebin = args[0].get::<super::UnifiedDecodeBin>().unwrap();
+                        let imp = decodebin.imp();
+                        // Print the corrupted-frame
+                        gst::debug!(CAT,"corrupted-frame signal received");
+
+                        imp.decoder.emit_by_name::<()>("corrupted-frame", &[]);
+                        None
+                    })
+                    .build(),
+            ]
+        });
+
+        SIGNALS.as_ref()
+    }
+
     // Called right after construction of a new instance
     fn constructed(&self) {
         // Call the parent class' ::constructed() implementation first
@@ -101,7 +186,6 @@ impl ObjectImpl for UnifiedDecodeBin {
         obj.add_pad(&self.sinkpad).unwrap();
         obj.add_pad(&self.srcpad).unwrap();
     }
-
 }
 
 impl GstObjectImpl for UnifiedDecodeBin {}
