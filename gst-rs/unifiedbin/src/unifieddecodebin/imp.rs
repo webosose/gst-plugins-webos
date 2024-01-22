@@ -19,6 +19,8 @@
 use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
+use std::sync::Mutex;
+use std::string::String;
 
 use once_cell::sync::Lazy;
 
@@ -35,6 +37,20 @@ pub struct UnifiedDecodeBin {
     decoder: gst::Element,
     srcpad: gst::GhostPad,
     sinkpad: gst::GhostPad,
+    server_side_trick: Mutex<bool>,
+    dish_trick: Mutex<bool>,
+    dish_trick_ignore_rate: Mutex<bool>,
+    change_buffer_meta: Mutex<bool>,
+    vdec_monopolize: Mutex<bool>,
+    use_8k_external: Mutex<bool>,
+    req_decryptor: Mutex<bool>,
+    vdec_handle: Mutex<u32>,
+    svp_version: Mutex<u32>,
+    current_pts: Mutex<u64>,
+    app_type: Mutex<String>,
+    drmtype: Mutex<String>,
+    factory: Option<gst::ElementFactory>,
+    decryptor: Option<gst::Element>,
 }
 
 #[glib::object_subclass]
@@ -62,11 +78,28 @@ impl ObjectSubclass for UnifiedDecodeBin {
             .build()
             .unwrap();
 
+        let factory = None;
+        let decryptor = None;
+
         // Return an instance of our struct
         Self {
             decoder,
             srcpad,
             sinkpad,
+            server_side_trick: Mutex::new(false),
+            dish_trick: Mutex::new(false),
+            dish_trick_ignore_rate: Mutex::new(false),
+            change_buffer_meta: Mutex::new(true),
+            vdec_monopolize: Mutex::new(false),
+            use_8k_external: Mutex::new(false),
+            req_decryptor: Mutex::new(false),
+            vdec_handle: Mutex::new(0_u32),
+            svp_version: Mutex::new(0_u32),
+            current_pts: Mutex::new(0_u64),
+            app_type: Mutex::new("NULL".to_string()),
+            drmtype: Mutex::new("NULL".to_string()),
+            factory,
+            decryptor,
         }
     }
 }
@@ -185,6 +218,359 @@ impl ObjectImpl for UnifiedDecodeBin {
         // And finally add the two ghostpads to the bin.
         obj.add_pad(&self.sinkpad).unwrap();
         obj.add_pad(&self.srcpad).unwrap();
+    }
+
+    // Metadata for the element's properties
+    fn properties() -> &'static [glib::ParamSpec] {
+        static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
+            vec![
+                glib::ParamSpecBoolean::builder("server-side-trick")
+                    .nick("Server Side Trick")
+                    .blurb("Server Side Trick enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("dish-trick")
+                    .nick("Dish Trick")
+                    .blurb("Dish Trick Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("dish-trick-ignore-rate")
+                    .nick("Dish Trick Ignore Rate")
+                    .blurb("Dish Trick Ignore Rate Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("change-buffer-meta")
+                    .nick("Change Buffer Meta")
+                    .blurb("Change Buffer Meta Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("vdec-monopolize")
+                    .nick("Vdec Monopolize")
+                    .blurb("Vdec Monopolize Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("use-8k-external")
+                    .nick("Use 8k External")
+                    .blurb("Use 8k External Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecBoolean::builder("req-decryptor")
+                    .nick("Req Decryptor")
+                    .blurb("Req Decryptor Enabled?")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecUInt::builder("vdec-handle")
+                    .nick("Vdec Handle")
+                    .blurb("Vdec Handle")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecUInt::builder("svp-version")
+                    .nick("SVP Version")
+                    .blurb("SVP Version")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecUInt64::builder("current-pts")
+                    .nick("Current pts")
+                    .blurb("Current pts")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecString::builder("app-type")
+                    .nick("App Type")
+                    .blurb("App Type")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecString::builder("drmtype")
+                    .nick("DRM Type")
+                    .blurb("DRM Type")
+                    .readwrite()
+                    .build(),
+                glib::ParamSpecObject::builder::<gst::ElementFactory>("factory")
+                    .nick("factory")
+                    .blurb("factory to use (NULL = default factory)")
+                    .write_only()
+                    .build(),
+            ]
+        });
+
+        PROPERTIES.as_ref()
+    }
+
+    // Called whenever a value of a property is changed. It can be called
+    // at any time from any thread.
+    fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
+        match pspec.name() {
+            "server-side-trick" => {
+                let mut server_side_trick = self.server_side_trick.lock().unwrap();
+                let new_server_side_trick_enable = value
+                    .get::<bool>()
+                    .expect("server side trick");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "server side trick switch from {:?} to {:?}",
+                    server_side_trick,
+                    new_server_side_trick_enable
+                );
+                *server_side_trick = new_server_side_trick_enable;
+                self.decoder.set_property("server-side-trick", new_server_side_trick_enable );
+            }
+            "dish-trick" => {
+                let mut dish_trick = self.dish_trick.lock().unwrap();
+                let new_dish_trick_enable = value
+                    .get::<bool>()
+                    .expect("dish trick");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "dish_trick switch from {:?} to {:?}",
+                    dish_trick,
+                    new_dish_trick_enable
+                );
+                *dish_trick = new_dish_trick_enable;
+                self.decoder.set_property("dish-trick", new_dish_trick_enable);
+            }
+            "dish-trick-ignore-rate" => {
+                let mut dish_trick_ignore_rate = self.dish_trick_ignore_rate.lock().unwrap();
+                let new_dish_trick_ignore_rate_enable = value
+                    .get::<bool>()
+                    .expect("dish trick ignore rate");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "dish trick ignore rate switch from {:?} to {:?}",
+                    dish_trick_ignore_rate,
+                    new_dish_trick_ignore_rate_enable
+                );
+                *dish_trick_ignore_rate = new_dish_trick_ignore_rate_enable;
+                self.decoder.set_property("dish-trick-ignore-rate", new_dish_trick_ignore_rate_enable);
+            }
+            "change-buffer-meta" => {
+                let mut change_buffer_meta = self.change_buffer_meta.lock().unwrap();
+                let new_change_buffer_meta_enable = value
+                    .get::<bool>()
+                    .expect("change buffer meta");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "change buffer meta switch from {:?} to {:?}",
+                    change_buffer_meta,
+                    new_change_buffer_meta_enable
+                );
+                *change_buffer_meta = new_change_buffer_meta_enable;
+                self.decoder.set_property("change-buffer-meta", new_change_buffer_meta_enable);
+            }
+            "vdec-monopolize" => {
+                let mut vdec_monopolize = self.vdec_monopolize.lock().unwrap();
+                let new_vdec_monopolize_enable = value
+                    .get::<bool>()
+                    .expect("vdec monopolize");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "vdec monopolize switch from {:?} to {:?}",
+                    vdec_monopolize,
+                    new_vdec_monopolize_enable
+                );
+                *vdec_monopolize = new_vdec_monopolize_enable;
+                self.decoder.set_property("vdec-monopolize", new_vdec_monopolize_enable);
+            }
+            "use-8k-external" => {
+                let mut use_8k_external = self.use_8k_external.lock().unwrap();
+                let new_use_8k_external_enable = value
+                    .get::<bool>()
+                    .expect("use 8k external");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "use-8k-external switch from {:?} to {:?}",
+                    use_8k_external,
+                    new_use_8k_external_enable
+                );
+                *use_8k_external = new_use_8k_external_enable;
+            }
+            "req-decryptor" => {
+                let mut req_decryptor = self.req_decryptor.lock().unwrap();
+                let new_req_decryptor_enable = value
+                    .get::<bool>()
+                    .expect("req decryptor");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "req-decryptor switch from {:?} to {:?}",
+                    req_decryptor,
+                    new_req_decryptor_enable
+                );
+                *req_decryptor = new_req_decryptor_enable;
+                if *req_decryptor == true
+                {
+                    //release the decryptor if already exits
+                    //if self.decryptor == gstreamer::Element
+                    //{
+                        //let _ = self.decryptor.set_state(gst::State::Null);
+                       // self.obj().remove(&self.decryptor).unwrap();
+                    //}
+                    //TODO: Add decryptor based on SVP version
+                }
+            }
+            "vdec-handle" => {
+                let mut vdec_handle = self.vdec_handle.lock().unwrap();
+                let new_vdec_handle = value
+                    .get::<u32>()
+                    .expect("vdec handle");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "vdec-handle modified from {:?} to {:?}",
+                    vdec_handle,
+                    new_vdec_handle
+                );
+                *vdec_handle = new_vdec_handle;
+                let req_decryptor = self.req_decryptor.lock().unwrap();
+                if *req_decryptor == true
+                {
+                    //self.decryptor.set_property("vdec-handle", new_vdec_handle);
+                }
+            }
+            "svp-version" => {
+                let mut svp_version = self.svp_version.lock().unwrap();
+                let new_svp_version = value
+                    .get::<u32>()
+                    .expect("SVP Version");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "svp-version modified from {:?} to {:?}",
+                    svp_version,
+                    new_svp_version
+                );
+                *svp_version = new_svp_version;
+            }
+            "current-pts" => {
+                let mut current_pts = self.current_pts.lock().unwrap();
+                let new_current_pts = value
+                    .get::<u64>()
+                    .expect("Current pts");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "current-pts modified from {:?} to {:?}",
+                    current_pts,
+                    new_current_pts
+                );
+                *current_pts = new_current_pts;
+                let req_decryptor = self.req_decryptor.lock().unwrap();
+                if *req_decryptor == true
+                {
+                    //self.decryptor.set_property("current-pts", new_current_pts);
+                }
+            }
+            "app-type" => {
+                let mut app_type = self.app_type.lock().unwrap();
+                let new_app_type = value
+                    .get::<String>()
+                    .expect("App Type");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "app-type modified from {:?} to {:?}",
+                    app_type,
+                    new_app_type
+                );
+                *app_type = new_app_type.clone();
+                self.decoder.set_property("app-type", new_app_type);
+            }
+            "drmtype" => {
+                let mut drmtype = self.drmtype.lock().unwrap();
+                let new_drmtype = value
+                    .get::<String>()
+                    .expect("DRM Type");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "drmtype modified from {:?} to {:?}",
+                    drmtype,
+                    new_drmtype
+                );
+                *drmtype = new_drmtype.clone();
+                //self.decoder.set_property("drmtype", new_drmtype);
+            }
+            "factory" => {
+                /*let mut factory = self.factory.as_ref().unwrap();
+                let new_factory = value
+                    .get::<gst::ElementFactory>()
+                    .expect("factory");
+
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "factory modified from {:?} to {:?}",
+                    factory,
+                    new_factory
+                );
+                factory = &new_factory;
+                */
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    //Called whenever a value of a property is read. It can be called
+    // at any time from any thread.
+    fn property(&self, _id: usize, pspec: &glib::ParamSpec) -> glib::Value {
+        match pspec.name() {
+            "server-side-trick" => {
+                let server_side_trick = self.server_side_trick.lock().unwrap();
+                server_side_trick.to_value()
+            }
+            "dish-trick" => {
+                let dish_trick = self.dish_trick.lock().unwrap();
+                dish_trick.to_value()
+            }
+            "dish-trick-ignore-rate" => {
+                let dish_trick_ignore_rate = self.dish_trick_ignore_rate.lock().unwrap();
+                dish_trick_ignore_rate.to_value()
+            }
+            "change-buffer-meta" => {
+                let change_buffer_meta = self.change_buffer_meta.lock().unwrap();
+                change_buffer_meta.to_value()
+            }
+            "vdec-monopolize" => {
+                let vdec_monopolize = self.vdec_monopolize.lock().unwrap();
+                vdec_monopolize.to_value()
+            }
+            "use-8k-external" => {
+                let use_8k_external = self.use_8k_external.lock().unwrap();
+                use_8k_external.to_value()
+            }
+            "req-decryptor" => {
+                let req_decryptor = self.req_decryptor.lock().unwrap();
+                req_decryptor.to_value()
+            }
+            "vdec-handle" => {
+                let vdec_handle = self.vdec_handle.lock().unwrap();
+                vdec_handle.to_value()
+            }
+            "svp-version" => {
+                let svp_version = self.svp_version.lock().unwrap();
+                svp_version.to_value()
+            }
+            "current-pts" => {
+                let current_pts = self.current_pts.lock().unwrap();
+                current_pts.to_value()
+            }
+            "app-type" => {
+                let app_type = self.app_type.lock().unwrap();
+                app_type.to_value()
+            }
+            "drmtype" => {
+                let drmtype = self.drmtype.lock().unwrap();
+                drmtype.to_value()
+            }
+            "factory" => {
+                self.factory.to_value()
+            }
+            _ => unimplemented!(),
+        }
     }
 }
 
