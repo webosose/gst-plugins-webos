@@ -21,8 +21,13 @@ use gst::prelude::*;
 use gst::subclass::prelude::*;
 use std::sync::Mutex;
 use std::string::String;
+use std::ops::Deref;
 
 use once_cell::sync::Lazy;
+
+use super::SvpVersion;
+
+const DEFAULT_SVP_VERSION: SvpVersion = SvpVersion::SvpNone;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -45,12 +50,12 @@ pub struct UnifiedDecodeBin {
     use_8k_external: Mutex<bool>,
     req_decryptor: Mutex<bool>,
     vdec_handle: Mutex<u32>,
-    svp_version: Mutex<u32>,
+    svp_version: Mutex<SvpVersion>,
     current_pts: Mutex<u64>,
     app_type: Mutex<String>,
     drmtype: Mutex<String>,
     factory: Option<gst::ElementFactory>,
-    decryptor: Option<gst::Element>,
+    decryptor:  Mutex<Option<gst::Element>>,
 }
 
 #[glib::object_subclass]
@@ -79,7 +84,7 @@ impl ObjectSubclass for UnifiedDecodeBin {
             .unwrap();
 
         let factory = None;
-        let decryptor = None;
+        let decryptor = Mutex::new(None);
 
         // Return an instance of our struct
         Self {
@@ -94,7 +99,7 @@ impl ObjectSubclass for UnifiedDecodeBin {
             use_8k_external: Mutex::new(false),
             req_decryptor: Mutex::new(false),
             vdec_handle: Mutex::new(0_u32),
-            svp_version: Mutex::new(0_u32),
+            svp_version: Mutex::new(DEFAULT_SVP_VERSION),
             current_pts: Mutex::new(0_u64),
             app_type: Mutex::new("NULL".to_string()),
             drmtype: Mutex::new("NULL".to_string()),
@@ -264,7 +269,7 @@ impl ObjectImpl for UnifiedDecodeBin {
                     .blurb("Vdec Handle")
                     .readwrite()
                     .build(),
-                glib::ParamSpecUInt::builder("svp-version")
+                glib::ParamSpecEnum::builder::<SvpVersion>("svp-version", DEFAULT_SVP_VERSION)
                     .nick("SVP Version")
                     .blurb("SVP Version")
                     .readwrite()
@@ -376,7 +381,7 @@ impl ObjectImpl for UnifiedDecodeBin {
             }
             "use-8k-external" => {
                 let mut use_8k_external = self.use_8k_external.lock().unwrap();
-                let new_use_8k_external_enable = value
+                let new_use_8k_external = value
                     .get::<bool>()
                     .expect("use 8k external");
                 gst::info!(
@@ -384,9 +389,9 @@ impl ObjectImpl for UnifiedDecodeBin {
                     imp: self,
                     "use-8k-external switch from {:?} to {:?}",
                     use_8k_external,
-                    new_use_8k_external_enable
+                    new_use_8k_external
                 );
-                *use_8k_external = new_use_8k_external_enable;
+                *use_8k_external = new_use_8k_external;
             }
             "req-decryptor" => {
                 let mut req_decryptor = self.req_decryptor.lock().unwrap();
@@ -403,13 +408,7 @@ impl ObjectImpl for UnifiedDecodeBin {
                 *req_decryptor = new_req_decryptor_enable;
                 if *req_decryptor == true
                 {
-                    //release the decryptor if already exits
-                    //if self.decryptor == gstreamer::Element
-                    //{
-                        //let _ = self.decryptor.set_state(gst::State::Null);
-                       // self.obj().remove(&self.decryptor).unwrap();
-                    //}
-                    //TODO: Add decryptor based on SVP version
+                    gst_unifieddecode_bin_create_decryptor_element(self);
                 }
             }
             "vdec-handle" => {
@@ -428,19 +427,29 @@ impl ObjectImpl for UnifiedDecodeBin {
                 let req_decryptor = self.req_decryptor.lock().unwrap();
                 if *req_decryptor == true
                 {
-                    //self.decryptor.set_property("vdec-handle", new_vdec_handle);
+                    let cur_decryptor = self.decryptor.lock().unwrap();
+                    let tmp_decryptor = cur_decryptor.deref();
+                    match tmp_decryptor {
+                        Some(decryptor) => {
+                            // check if the property is found
+                            if let Some(prop) = decryptor.find_property("vdec-handle") {
+                                decryptor.set_property("vdec-handle", new_vdec_handle);
+                            }
+                        }
+                        None => {},
+                    }
                 }
             }
             "svp-version" => {
-                let mut svp_version = self.svp_version.lock().unwrap();
+                let mut  svp_version = self.svp_version.lock().unwrap();
                 let new_svp_version = value
-                    .get::<u32>()
+                    .get::<SvpVersion>()
                     .expect("SVP Version");
                 gst::info!(
                     CAT,
                     imp: self,
                     "svp-version modified from {:?} to {:?}",
-                    svp_version,
+                    self.svp_version,
                     new_svp_version
                 );
                 *svp_version = new_svp_version;
@@ -461,7 +470,17 @@ impl ObjectImpl for UnifiedDecodeBin {
                 let req_decryptor = self.req_decryptor.lock().unwrap();
                 if *req_decryptor == true
                 {
-                    //self.decryptor.set_property("current-pts", new_current_pts);
+                    let cur_decryptor = self.decryptor.lock().unwrap();
+                    let tmp_decryptor = cur_decryptor.deref();
+                    match tmp_decryptor {
+                        Some(decryptor) => {
+                            // check if the property is found
+                            if let Some(prop) = decryptor.find_property("current-pts") {
+                                decryptor.set_property("current-pts", new_current_pts);
+                            }
+                        }
+                        None => {},
+                    }
                 }
             }
             "app-type" => {
@@ -492,7 +511,21 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_drmtype
                 );
                 *drmtype = new_drmtype.clone();
-                //self.decoder.set_property("drmtype", new_drmtype);
+                let req_decryptor = self.req_decryptor.lock().unwrap();
+                if *req_decryptor == true
+                {
+                    let cur_decryptor = self.decryptor.lock().unwrap();
+                    let tmp_decryptor = cur_decryptor.deref();
+                    match tmp_decryptor {
+                        Some(decryptor) => {
+                            // check if the property is found
+                            if let Some(prop) = decryptor.find_property("drmtype") {
+                                decryptor.set_property("drmtype", new_drmtype);
+                            }
+                        }
+                        None => {},
+                    }
+                }
             }
             "factory" => {
                 /*let mut factory = self.factory.as_ref().unwrap();
@@ -633,4 +666,51 @@ impl BinImpl for UnifiedDecodeBin {
         // Delegate the message handling to the parent class
         self.parent_handle_message(msg);
     }
+}
+
+fn gst_unifieddecode_bin_create_decryptor_element(decodebin: &UnifiedDecodeBin) {
+    let mut decryptorName = "inplacedecryptor";
+    let mut cur_decryptor = decodebin.decryptor.lock().unwrap();
+    let tmp_decryptor = cur_decryptor.deref();
+    match tmp_decryptor {
+        Some(decryptor) => {
+            gst::debug!(CAT, imp: decodebin, "Remove existing decryptor element first!");
+            let _= decryptor.set_state(gst::State::Null);
+            decodebin.obj().remove(decryptor).unwrap();
+        }
+        None => {},
+    }
+
+    if *decodebin.svp_version.lock().unwrap() != SvpVersion::SvpNone && *decodebin.use_8k_external.lock().unwrap() == true {
+        decryptorName = "dtcp2usb";
+    } else {
+        // find the property named "is-svp"
+        let prop = decodebin.obj().element_class().find_property("is-svp");
+        // check if the property is found
+        if let Some(pspec) = prop {
+            decodebin.decoder.set_property("is-svp", true);
+        }
+
+         if *decodebin.svp_version.lock().unwrap() >= SvpVersion::SvpVersion30 {
+            if *decodebin.svp_version.lock().unwrap() < SvpVersion::SvpVersion40 {
+                decryptorName = "svp";
+            } else {
+                decryptorName = "passthroughdecryptor";
+            }
+        }
+    }
+
+    let new_decryptor = gst::ElementFactory::make(decryptorName)
+            .name("decryptor-in-rsunifieddecodebin")
+            .build()
+            .unwrap();
+
+    // add decryptor to unifieddecodebin
+    decodebin.obj().add(&new_decryptor).unwrap();
+
+    new_decryptor.sync_state_with_parent().unwrap();
+
+    *cur_decryptor = Some(new_decryptor);
+
+    gst::debug!(CAT, imp: decodebin, "Creation successful for { } element in rsunifieddecodebin", decryptorName);
 }

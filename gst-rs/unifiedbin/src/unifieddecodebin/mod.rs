@@ -21,6 +21,19 @@ use gst::prelude::*;
 
 mod imp;
 
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy, glib::Enum)]
+#[repr(u32)]
+#[enum_type(name = "SvpVersion")]
+pub enum SvpVersion {
+  SvpNone = 0,        // none svp
+  SvpVersion10 = 10, // buffer based
+  SvpVersion20 = 20, // address based
+  SvpVersion25 = 25, // address/size based
+  SvpVersion30 = 30, // gstreamer svp element based
+  SvpVersion35 = 35, // gstreamer svp element, address/size based
+  SvpVersion40 = 40, // gstreamer adaptivedecryptor element, address/size based
+}
+
 // The public Rust wrapper type for our element
 glib::wrapper! {
     pub struct UnifiedDecodeBin(ObjectSubclass<imp::UnifiedDecodeBin>) @extends gst::Bin, gst::Element, gst::Object;
