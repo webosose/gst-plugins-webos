@@ -39,7 +39,7 @@ static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
 
 // Struct containing all the element data
 pub struct UnifiedDecodeBin {
-    decoder: gst::Element,
+    decoder: Mutex<Option<gst::Element>>,
     srcpad: gst::GhostPad,
     sinkpad: gst::GhostPad,
     server_side_trick: Mutex<bool>,
@@ -54,7 +54,7 @@ pub struct UnifiedDecodeBin {
     current_pts: Mutex<u64>,
     app_type: Mutex<String>,
     drmtype: Mutex<String>,
-    factory: Option<gst::ElementFactory>,
+    factory: Mutex<Option<gst::ElementFactory>>,
     decryptor:  Mutex<Option<gst::Element>>,
 }
 
@@ -77,13 +77,8 @@ impl ObjectSubclass for UnifiedDecodeBin {
         let templ = klass.pad_template("src").unwrap();
         let srcpad = gst::GhostPad::from_template(&templ, Some("src"));
 
-        // Create the decode element.
-        let decoder = gst::ElementFactory::make("v4l2h264dec")
-            .name("decoder-in-rsunifieddecodebin")
-            .build()
-            .unwrap();
-
-        let factory = None;
+        let decoder = Mutex::new(None);
+        let factory = Mutex::new(None);
         let decryptor = Mutex::new(None);
 
         // Return an instance of our struct
@@ -152,7 +147,14 @@ impl ObjectImpl for UnifiedDecodeBin {
                         // Print the forced-preroll value log
                         gst::debug!(CAT,"forced-preroll {}", value);
 
-                        imp.decoder.emit_by_name::<()>("forced-preroll", &[&value]);
+                        let curr_decoder = imp.decoder.lock().unwrap();
+                        let tmp_decoder = curr_decoder.deref();
+                        match tmp_decoder {
+                        Some(decoder) => {
+                            decoder.emit_by_name::<()>("forced-preroll", &[&value]);
+                        }
+                        None => {},
+                        }
                         None
                     })
                     .build(),
@@ -170,7 +172,14 @@ impl ObjectImpl for UnifiedDecodeBin {
                         // Print the svp-handle value log
                         gst::debug!(CAT,"svp-handle {}", value);
 
-                        imp.decoder.emit_by_name::<()>("svp-handle", &[&value]);
+                        let curr_decoder = imp.decoder.lock().unwrap();
+                        let tmp_decoder = curr_decoder.deref();
+                        match tmp_decoder {
+                        Some(decoder) => {
+                            decoder.emit_by_name::<()>("svp-handle", &[&value]);
+                        }
+                        None => {},
+                        }
                         None
                     })
                     .build(),
@@ -185,7 +194,14 @@ impl ObjectImpl for UnifiedDecodeBin {
                         // Print the corrupted-frame
                         gst::debug!(CAT,"corrupted-frame signal received");
 
-                        imp.decoder.emit_by_name::<()>("corrupted-frame", &[]);
+                        let curr_decoder = imp.decoder.lock().unwrap();
+                        let tmp_decoder = curr_decoder.deref();
+                        match tmp_decoder {
+                        Some(decoder) => {
+                            decoder.emit_by_name::<()>("corrupted-frame", &[]);
+                        }
+                        None => {},
+                        }
                         None
                     })
                     .build(),
@@ -200,21 +216,8 @@ impl ObjectImpl for UnifiedDecodeBin {
         // Call the parent class' ::constructed() implementation first
         self.parent_constructed();
 
-        // Here we actually add the pads we created in UnifiedDecodeBin::new() to the
-        // element so that GStreamer is aware of their existence.
-
+        // Here we actually add the pads we created in UnifiedDecodeBin
         let obj = self.obj();
-
-        // Add the decoder element to the bin.
-        obj.add(&self.decoder).unwrap();
-
-        // Then set the ghost pad targets to the corresponding pads of the decoder element.
-        self.sinkpad
-            .set_target(Some(&self.decoder.static_pad("sink").unwrap()))
-            .unwrap();
-        self.srcpad
-            .set_target(Some(&self.decoder.static_pad("src").unwrap()))
-            .unwrap();
 
         // Activate ghost pads
         self.sinkpad.set_active(true).unwrap();
@@ -317,7 +320,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_server_side_trick_enable
                 );
                 *server_side_trick = new_server_side_trick_enable;
-                self.decoder.set_property("server-side-trick", new_server_side_trick_enable );
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("server-side-trick") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: server-side-trick!");
+                            let _= decoder.set_property("server-side-trick", new_server_side_trick_enable);
+                        }
+                    }
+                    None => {},
+                }
             }
             "dish-trick" => {
                 let mut dish_trick = self.dish_trick.lock().unwrap();
@@ -332,7 +346,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_dish_trick_enable
                 );
                 *dish_trick = new_dish_trick_enable;
-                self.decoder.set_property("dish-trick", new_dish_trick_enable);
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("dish-trick") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: dish-trick!");
+                            let _= decoder.set_property("dish-trick", new_dish_trick_enable);
+                        }
+                    }
+                    None => {},
+                }
             }
             "dish-trick-ignore-rate" => {
                 let mut dish_trick_ignore_rate = self.dish_trick_ignore_rate.lock().unwrap();
@@ -347,7 +372,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_dish_trick_ignore_rate_enable
                 );
                 *dish_trick_ignore_rate = new_dish_trick_ignore_rate_enable;
-                self.decoder.set_property("dish-trick-ignore-rate", new_dish_trick_ignore_rate_enable);
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("dish-trick-ignore-rate") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: dish-trick-ignore-rate!");
+                            let _= decoder.set_property("dish-trick-ignore-rate", new_dish_trick_ignore_rate_enable);
+                        }
+                    }
+                    None => {},
+                }
             }
             "change-buffer-meta" => {
                 let mut change_buffer_meta = self.change_buffer_meta.lock().unwrap();
@@ -362,7 +398,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_change_buffer_meta_enable
                 );
                 *change_buffer_meta = new_change_buffer_meta_enable;
-                self.decoder.set_property("change-buffer-meta", new_change_buffer_meta_enable);
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("change-buffer-meta") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: change-buffer-meta!");
+                            let _= decoder.set_property("change-buffer-meta", new_change_buffer_meta_enable);
+                        }
+                    }
+                    None => {},
+                }
             }
             "vdec-monopolize" => {
                 let mut vdec_monopolize = self.vdec_monopolize.lock().unwrap();
@@ -377,7 +424,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_vdec_monopolize_enable
                 );
                 *vdec_monopolize = new_vdec_monopolize_enable;
-                self.decoder.set_property("vdec-monopolize", new_vdec_monopolize_enable);
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("vdec-monopolize") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: vdec-monopolize!");
+                            let _= decoder.set_property("vdec-monopolize", new_vdec_monopolize_enable);
+                        }
+                    }
+                    None => {},
+                }
             }
             "use-8k-external" => {
                 let mut use_8k_external = self.use_8k_external.lock().unwrap();
@@ -496,7 +554,18 @@ impl ObjectImpl for UnifiedDecodeBin {
                     new_app_type
                 );
                 *app_type = new_app_type.clone();
-                self.decoder.set_property("app-type", new_app_type);
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(prop) = decoder.find_property("app-type") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: app-type!");
+                            let _= decoder.set_property("app-type", new_app_type);
+                        }
+                    }
+                    None => {},
+                }
             }
             "drmtype" => {
                 let mut drmtype = self.drmtype.lock().unwrap();
@@ -528,20 +597,42 @@ impl ObjectImpl for UnifiedDecodeBin {
                 }
             }
             "factory" => {
-                /*let mut factory = self.factory.as_ref().unwrap();
-                let new_factory = value
-                    .get::<gst::ElementFactory>()
-                    .expect("factory");
+                let mut factory = self.factory.lock().unwrap();
+                let new_factory = value.get::<gst::ElementFactory>().expect("factory");
+                gst::info!(CAT, imp: self,"factory modified from {:?} to {:?}", factory, new_factory);
 
-                gst::info!(
-                    CAT,
-                    imp: self,
-                    "factory modified from {:?} to {:?}",
-                    factory,
-                    new_factory
-                );
-                factory = &new_factory;
-                */
+                let new_decoder = gst::ElementFactory::create(&new_factory)
+                    .name("decoder-in-rsunifieddecodebin")
+                    .build()
+                    .unwrap();
+
+                *factory = Some(new_factory);
+
+                let obj = self.obj();
+
+                let mut curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        gst::info!(CAT, imp: self, "Remove existing decoder element from bin");
+                        let _= decoder.set_state(gst::State::Null);
+                        obj.remove(decoder).unwrap();
+                    }
+                    None => {},
+                }
+
+                // Add the decoder element to the bin.
+                obj.add(&new_decoder).unwrap();
+
+                // sync with parent
+                new_decoder.sync_state_with_parent().unwrap();
+
+                //TODO: for drm playback linking should be ghostpad::sink->decrypter->decoder
+                // Then set the ghost pad targets to the corresponding pads of the decoder element.
+                self.sinkpad.set_target(Some(&new_decoder.static_pad("sink").unwrap())).unwrap();
+                self.srcpad.set_target(Some(&new_decoder.static_pad("src").unwrap())).unwrap();
+
+                *curr_decoder = Some(new_decoder);
             }
             _ => unimplemented!(),
         }
@@ -600,7 +691,8 @@ impl ObjectImpl for UnifiedDecodeBin {
                 drmtype.to_value()
             }
             "factory" => {
-                self.factory.to_value()
+                let factory = self.factory.lock().unwrap();
+                factory.to_value()
             }
             _ => unimplemented!(),
         }
@@ -684,14 +776,20 @@ fn gst_unifieddecode_bin_create_decryptor_element(decodebin: &UnifiedDecodeBin) 
     if *decodebin.svp_version.lock().unwrap() != SvpVersion::SvpNone && *decodebin.use_8k_external.lock().unwrap() == true {
         decryptorName = "dtcp2usb";
     } else {
-        // find the property named "is-svp"
-        let prop = decodebin.obj().element_class().find_property("is-svp");
-        // check if the property is found
-        if let Some(pspec) = prop {
-            decodebin.decoder.set_property("is-svp", true);
+
+        let curr_decoder = decodebin.decoder.lock().unwrap();
+        let tmp_decoder = curr_decoder.deref();
+        match tmp_decoder {
+            Some(decoder) => {
+                // check if the property is found
+                if let Some(prop) = decoder.find_property("is-svp") {
+                    decoder.set_property("is-svp", true);
+                }
+            }
+            None => {},
         }
 
-         if *decodebin.svp_version.lock().unwrap() >= SvpVersion::SvpVersion30 {
+        if *decodebin.svp_version.lock().unwrap() >= SvpVersion::SvpVersion30 {
             if *decodebin.svp_version.lock().unwrap() < SvpVersion::SvpVersion40 {
                 decryptorName = "svp";
             } else {
