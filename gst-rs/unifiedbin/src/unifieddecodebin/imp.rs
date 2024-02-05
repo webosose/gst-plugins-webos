@@ -228,6 +228,40 @@ impl ObjectImpl for UnifiedDecodeBin {
         obj.add_pad(&self.srcpad).unwrap();
     }
 
+    fn dispose(&self) {
+        /* remove ghost pad in unifieddecodebin */
+        let _ = self.sinkpad.set_active(false);
+        self.obj().remove_pad(&self.sinkpad).unwrap();
+        let _ = self.srcpad.set_active(false);
+        self.obj().remove_pad(&self.srcpad).unwrap();
+
+        /* remove decryptor element */
+        if *self.req_decryptor.lock().unwrap() == true {
+            let cur_decryptor = self.decryptor.lock().unwrap();
+            let tmp_decryptor = cur_decryptor.deref();
+
+            match tmp_decryptor {
+                Some(decryptor) => {
+                    let _= decryptor.set_state(gst::State::Null);
+                    self.obj().remove(decryptor).unwrap();
+                }
+                None => {},
+             }
+        }
+
+        /* remove decoder element */
+        let cur_decoder = self.decoder.lock().unwrap();
+        let tmp_decoder = cur_decoder.deref();
+
+        match tmp_decoder {
+            Some(decoder) => {
+                let _ = decoder.set_state(gst::State::Null);
+                self.obj().remove(decoder).unwrap();
+            }
+           None => {},
+        }
+    }
+
     // Metadata for the element's properties
     fn properties() -> &'static [glib::ParamSpec] {
         static PROPERTIES: Lazy<Vec<glib::ParamSpec>> = Lazy::new(|| {
@@ -627,11 +661,6 @@ impl ObjectImpl for UnifiedDecodeBin {
                 // sync with parent
                 new_decoder.sync_state_with_parent().unwrap();
 
-                //TODO: for drm playback linking should be ghostpad::sink->decrypter->decoder
-                // Then set the ghost pad targets to the corresponding pads of the decoder element.
-                self.sinkpad.set_target(Some(&new_decoder.static_pad("sink").unwrap())).unwrap();
-                self.srcpad.set_target(Some(&new_decoder.static_pad("src").unwrap())).unwrap();
-
                 *curr_decoder = Some(new_decoder);
             }
             _ => unimplemented!(),
@@ -749,6 +778,51 @@ impl ElementImpl for UnifiedDecodeBin {
         });
 
         PAD_TEMPLATES.as_ref()
+    }
+
+    fn change_state(
+        &self,
+        transition: gst::StateChange,
+    ) -> Result<gst::StateChangeSuccess, gst::StateChangeError> {
+        gst::debug!(CAT, imp: self, "Changing state {:?}", transition);
+
+        match transition {
+            gst::StateChange::NullToReady => { }
+            gst::StateChange::ReadyToPaused => {
+
+                if *self.req_decryptor.lock().unwrap() == true {
+                    let cur_decryptor = self.decryptor.lock().unwrap();
+                    let tmp_decryptor = cur_decryptor.deref();
+
+                    match tmp_decryptor {
+                       Some(decryptor) => {
+                            gst::info!(CAT, imp: self, "linking decryptor with decoder");
+                            let decoder = self.decoder.lock().unwrap().clone().unwrap();
+                            decryptor.link(&decoder).unwrap();
+                            self.sinkpad.set_target(Some(&decryptor.static_pad("sink").unwrap())).unwrap();
+                            self.srcpad.set_target(Some(&decoder.static_pad("src").unwrap())).unwrap();
+                        }
+                        None => {},
+                    }
+                } else {
+                    let curr_decoder = self.decoder.lock().unwrap();
+                    let tmp_decoder = curr_decoder.deref();
+                    match tmp_decoder {
+                        Some(decoder) => {
+                            gst::info!(CAT, imp: self, "link decoder pads with bin pads");
+                            self.sinkpad.set_target(Some(&decoder.static_pad("sink").unwrap())).unwrap();
+                            self.srcpad.set_target(Some(&decoder.static_pad("src").unwrap())).unwrap();
+                        }
+                        None => {},
+                    }
+                }
+            }
+            gst::StateChange::PausedToPlaying => { }
+            gst::StateChange::PlayingToPaused => { }
+            _ => {}
+        }
+
+        self.parent_change_state(transition)
     }
 }
 
