@@ -20,8 +20,8 @@
 
 use gst::glib;
 
-mod unifiedsinkbin;
 mod unifieddecodebin;
+mod unifiedsinkbin;
 
 // Plugin entry point that should register all elements provided by this plugin,
 // and everything else that this plugin might provide (e.g. typefinders or device providers).
@@ -37,12 +37,12 @@ fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
 // license of the plugin, source package name, binary package name, origin where it comes from
 // and the date/time of release.
 gst::plugin_define!(
-    rsunifiedbin,                               // name
-    env!("CARGO_PKG_DESCRIPTION"),              // description
-    plugin_init,                                // plugin init
-    env!("CARGO_PKG_VERSION"),                  // version
-    "LGPL",                                     // license
-    env!("CARGO_PKG_REPOSITORY"),               // source
-    "GStreamer webOS Plug-ins source release",  // package
-    "Unknown package origin"                    // origin
+    rsunifiedbin,                              // name
+    env!("CARGO_PKG_DESCRIPTION"),             // description
+    plugin_init,                               // plugin init
+    env!("CARGO_PKG_VERSION"),                 // version
+    "LGPL",                                    // license
+    env!("CARGO_PKG_REPOSITORY"),              // source
+    "GStreamer webOS Plug-ins source release", // package
+    "Unknown package origin"                   // origin
 );

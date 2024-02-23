@@ -20,20 +20,20 @@ use gst::glib;
 use gst::prelude::*;
 use gst::subclass::prelude::*;
 use gst_video::VideoChromaMode;
-use std::sync::Mutex;
 use std::ops::Deref;
+use std::sync::Mutex;
 use std::thread;
 use std::time;
 
 use once_cell::sync::Lazy;
 
-use super::UnifiedSinkBinOutput;
 use super::GstUnifiedSinkRenderType;
+use super::UnifiedSinkBinOutput;
 
 // This module contains the private implementation details of our element
 
-const DEFAULT_OUTPUT_TYPE: UnifiedSinkBinOutput = UnifiedSinkBinOutput::TestPrintln;
-const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType = GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic;
+const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType =
+    GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -49,13 +49,7 @@ pub struct UnifiedSinkBin {
     convert: gst::Element,
     videosink: Mutex<Option<gst::Element>>,
     sinkpad: gst::GhostPad,
-    // We put the output_type property behind a mutex, as we want
-    // change it in the set_property function, which can be called
-    // from any thread.
-    output_type: Mutex<UnifiedSinkBinOutput>,
     render_type: Mutex<GstUnifiedSinkRenderType>,
-    element_added_id: Mutex<u64>,
-    element_removed_id: Mutex<u64>,
     test_switch_sink: Mutex<bool>,
     test_switch_sink_enable: Mutex<bool>,
     test_thread_start: Mutex<bool>,
@@ -96,11 +90,12 @@ impl ObjectSubclass for UnifiedSinkBin {
             .property("chroma-mode", VideoChromaMode::None)
             .build()
             .unwrap();
-        
+
         // Create the video sink element.
         let vsink = gst::ElementFactory::make("waylandsink")
             .name("waylandsink")
-            .build().ok();
+            .build()
+            .ok();
         let videosink = Mutex::new(vsink);
 
         let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
@@ -110,14 +105,11 @@ impl ObjectSubclass for UnifiedSinkBin {
             convert,
             videosink,
             sinkpad,
-            output_type: Mutex::new(UnifiedSinkBinOutput::TestPrintln),
             render_type,
-            element_added_id : Mutex::new(0_u64),
-            element_removed_id : Mutex::new(0_u64),
-            test_switch_sink : Mutex::new(false),
-            test_switch_sink_enable : Mutex::new(false),
-            test_thread_start : Mutex::new(false),
-            test_thread_eos : Mutex::new(false),
+            test_switch_sink: Mutex::new(false),
+            test_switch_sink_enable: Mutex::new(false),
+            test_thread_start: Mutex::new(false),
+            test_thread_eos: Mutex::new(false),
             thread: Mutex::new(None),
         }
     }
@@ -221,7 +213,6 @@ impl ObjectImpl for UnifiedSinkBin {
                     .run_first()
                     .param_types([gst::Element::static_type()])
                     .build(),
-
                 glib::subclass::Signal::builder("sink-element-removed")
                     .run_first()
                     .param_types([gst::Element::static_type()])
@@ -262,7 +253,7 @@ impl ObjectImpl for UnifiedSinkBin {
                 // Link convert to videosink
                 self.convert.link(sink).unwrap();
             }
-            None => {},
+            None => {}
         }
 
         // Then set the ghost pad targets to the corresponding pads of the valve element.
@@ -283,7 +274,7 @@ impl ObjectImpl for UnifiedSinkBin {
         self.obj().remove(&self.convert).unwrap();
 
         /* remove sink element */
-        let mut cur_vsink = self.videosink.lock().unwrap();
+        let cur_vsink = self.videosink.lock().unwrap();
         let tmp_vsink = cur_vsink.deref();
 
         match tmp_vsink {
@@ -291,7 +282,7 @@ impl ObjectImpl for UnifiedSinkBin {
                 let _ = sink.set_state(gst::State::Null);
                 self.obj().remove(sink).unwrap();
             }
-           None => {},
+            None => {}
         }
     }
 }
@@ -344,13 +335,13 @@ impl ElementImpl for UnifiedSinkBin {
 
     fn query(&self, query: &mut gst::QueryRef) -> bool {
         use gst::QueryViewMut;
-        let mut ret : bool = true;
+        let mut ret: bool = true;
 
         match query.view_mut() {
-            QueryViewMut::Position(ref mut q) => {
+            QueryViewMut::Position(ref mut _q) => {
                 ret = false;
             }
-            _ => { ret = ElementImplExt::parent_query(self, query) }
+            _ => ret = ElementImplExt::parent_query(self, query),
         }
 
         return ret;
@@ -365,37 +356,41 @@ impl ElementImpl for UnifiedSinkBin {
         let mut thread_guard = self.thread.lock().unwrap();
 
         match transition {
-            gst::StateChange::NullToReady => { }
-            gst::StateChange::ReadyToPaused => { }
+            gst::StateChange::NullToReady => {}
+            gst::StateChange::ReadyToPaused => {}
             gst::StateChange::PausedToPlaying => {
                 //timer start
                 let t_sw_sink = self.test_switch_sink.lock().unwrap();
                 let mut t_th_start = self.test_thread_start.lock().unwrap();
-                if *t_sw_sink == true && *t_th_start == false
-                {
+                if *t_sw_sink == true && *t_th_start == false {
                     *t_th_start = true;
 
                     let imp_weak = self.downgrade();
-                    *thread_guard = Some(thread::spawn(move|| {
+                    *thread_guard = Some(thread::spawn(move || {
                         let mut switch_sink: bool = false;
 
                         let imp = match imp_weak.upgrade() {
                             None => return,
                             Some(imp) => imp,
                         };
-                        let cur_test_thread_start = imp.test_thread_start.lock().unwrap();
+                        let _cur_test_thread_start = imp.test_thread_start.lock().unwrap();
 
-                        loop { //switch_sink_loop
+                        loop {
+                            //switch_sink_loop
                             thread::sleep(time::Duration::from_secs(5)); //SINK_SWITCH_INTERVAL
                             let cur_test_thread_eos = imp.test_thread_eos.lock().unwrap();
 
-                            if *cur_test_thread_eos == true{
+                            if *cur_test_thread_eos == true {
                                 break;
-                            }
-                            else {
-                                imp.obj().set_property("render-type",
-                                    if switch_sink { DEFAULT_RENDER_TYPE }
-                                    else { GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile } );
+                            } else {
+                                imp.obj().set_property(
+                                    "render-type",
+                                    if switch_sink {
+                                        DEFAULT_RENDER_TYPE
+                                    } else {
+                                        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile
+                                    },
+                                );
                                 switch_sink = !switch_sink;
                                 gst::debug!(CAT, imp: imp, "Switch render_type");
                             }
@@ -426,7 +421,7 @@ impl ElementImpl for UnifiedSinkBin {
 impl BinImpl for UnifiedSinkBin {
     fn handle_message(&self, msg: gst::Message) {
         use gst::MessageView;
-        let mut test_switch_sink_enable = self.test_switch_sink_enable.lock().unwrap();
+        let test_switch_sink_enable = self.test_switch_sink_enable.lock().unwrap();
 
         match msg.view() {
             // If this is the valve message, we print the status
@@ -444,7 +439,7 @@ impl BinImpl for UnifiedSinkBin {
                 if *test_switch_sink_enable == false {
                     self.parent_handle_message(msg);
                 }
-            },
+            }
         }
     }
 }
@@ -455,31 +450,29 @@ impl UnifiedSinkBin {
     }
 
     fn attach_sinkpad(&self) -> bool {
-        let mut ret : bool = false;
+        let ret: bool = false;
 
         // Then set the ghost pad targets to the corresponding pads of the valve element.
         self.sinkpad
-        .set_target(Some(&self.valve.static_pad("sink").unwrap()))
-        .unwrap();
+            .set_target(Some(&self.valve.static_pad("sink").unwrap()))
+            .unwrap();
 
         self.sinkpad.set_active(true).unwrap();
 
         self.obj().add_pad(&self.sinkpad).unwrap();
 
         unsafe {
-            self.sinkpad.set_event_function(|pad, parent, event| match event.view() {
-
-                _ => {
-                    gst::Pad::event_default(pad, parent, event)
-                }
-            });
+            self.sinkpad
+                .set_event_function(|pad, parent, event| match event.view() {
+                    _ => gst::Pad::event_default(pad, parent, event),
+                });
         }
 
         return ret;
     }
 }
 
-fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool{
+fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool {
     let mut ret: bool = true;
     let sink_name;
 
@@ -497,38 +490,29 @@ fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool{
             let _ = sink.set_state(gst::State::Null);
             sinkbin.obj().remove(sink).unwrap();
         }
-        None => {},
+        None => {}
     }
 
     let r_type = sinkbin.render_type.lock().unwrap();
     /* create sink element according to render type */
     /* [TODO] read gstcool.conf or configuration file before creation sink element */
     match *r_type {
-        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake =>{
-            sink_name = "fakesink"
-        }
-        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo =>{
-            sink_name = "glimagesink"
-        }
-        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic =>{
-            sink_name = "waylandsink"
-        }
-        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile =>{
-            sink_name = "filesink"
-        }
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake => sink_name = "fakesink",
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo => sink_name = "glimagesink",
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic => sink_name = "waylandsink",
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile => sink_name = "filesink",
         _ => {
             ret = false;
             return ret;
         }
     }
-    
-    let new_vsink = gst::ElementFactory::make(sink_name)
-            .name(sink_name)
-            .build()
-            .unwrap();
 
-    if *r_type == GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile
-    {
+    let new_vsink = gst::ElementFactory::make(sink_name)
+        .name(sink_name)
+        .build()
+        .unwrap();
+
+    if *r_type == GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile {
         new_vsink.set_property("location", "/tmp/testoutput.yuv");
         new_vsink.set_property("append", true);
         new_vsink.set_property("sync", true);
