@@ -498,7 +498,7 @@ fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool {
     /* [TODO] read gstcool.conf or configuration file before creation sink element */
     match *r_type {
         GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFake => sink_name = "fakesink",
-        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo => sink_name = "glimagesink",
+        GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo => sink_name = "lxvideosink",
         GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic => sink_name = "waylandsink",
         GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeFile => sink_name = "filesink",
         _ => {
