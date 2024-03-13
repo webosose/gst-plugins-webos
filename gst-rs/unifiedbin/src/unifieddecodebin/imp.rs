@@ -822,7 +822,8 @@ impl BinImpl for UnifiedDecodeBin {
 }
 
 fn gst_unifieddecode_bin_create_decryptor_element(decodebin: &UnifiedDecodeBin) {
-    let mut decryptor_name = "inplacedecryptor";
+    let mut decryptor_factory_name = "inplacedecryptor";
+    let mut decryptor_name = "decrypt-ip";
     let mut cur_decryptor = decodebin.decryptor.lock().unwrap();
     let tmp_decryptor = cur_decryptor.deref();
     match tmp_decryptor {
@@ -837,7 +838,8 @@ fn gst_unifieddecode_bin_create_decryptor_element(decodebin: &UnifiedDecodeBin) 
     if *decodebin.svp_version.lock().unwrap() != SvpVersion::SvpNone
         && *decodebin.use_8k_external.lock().unwrap() == true
     {
-        decryptor_name = "dtcp2usb";
+        decryptor_factory_name = "dtcp2usb";
+        decryptor_name = "dtcp2-usb";
     } else {
         let curr_decoder = decodebin.decoder.lock().unwrap();
         let tmp_decoder = curr_decoder.deref();
@@ -847,21 +849,27 @@ fn gst_unifieddecode_bin_create_decryptor_element(decodebin: &UnifiedDecodeBin) 
                 if let Some(_prop) = decoder.find_property("is-svp") {
                     decoder.set_property("is-svp", true);
                 }
+
+                // check if the property is found
+                if let Some(_prop) = decoder.find_property("secure") {
+                    // set secure property like exynos decoder
+                    gst::debug!(CAT, imp: decodebin, "set secure property");
+                    decoder.set_property_from_str("secure", "yes");
+                }
             }
-            None => {}
+            None => {
+                gst::debug!(CAT, imp: decodebin, "You must set factory before here");
+            }
         }
 
         if *decodebin.svp_version.lock().unwrap() >= SvpVersion::SvpVersion30 {
-            if *decodebin.svp_version.lock().unwrap() < SvpVersion::SvpVersion40 {
-                decryptor_name = "svp";
-            } else {
-                decryptor_name = "passthroughdecryptor";
-            }
+            decryptor_factory_name = "passthroughdecryptor";
+            decryptor_name = "decrypt-pt";
         }
     }
 
-    let new_decryptor = gst::ElementFactory::make(decryptor_name)
-        .name("decryptor-in-rsunifieddecodebin")
+    let new_decryptor = gst::ElementFactory::make(decryptor_factory_name)
+        .name(decryptor_name)
         .build()
         .unwrap();
 
