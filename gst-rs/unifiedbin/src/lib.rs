@@ -20,14 +20,25 @@
 
 use gst::glib;
 
+#[cfg(feature = "unifieddecodebin")]
 mod unifieddecodebin;
+
+#[cfg(feature = "unifiedsinkbin")]
 mod unifiedsinkbin;
 
 // Plugin entry point that should register all elements provided by this plugin,
 // and everything else that this plugin might provide (e.g. typefinders or device providers).
 fn plugin_init(plugin: &gst::Plugin) -> Result<(), glib::BoolError> {
-    unifiedsinkbin::register(plugin)?;
-    unifieddecodebin::register(plugin)?;
+    #[cfg(feature = "unifiedsinkbin")]
+    {
+        unifiedsinkbin::register(plugin)?;
+    }
+
+    #[cfg(feature = "unifieddecodebin")]
+    {
+        unifieddecodebin::register(plugin)?;
+    }
+
     Ok(())
 }
 
