@@ -32,8 +32,13 @@ use super::UnifiedSinkBinOutput;
 
 // This module contains the private implementation details of our element
 
+#[cfg(feature = "waylandsink")]
 const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType =
     GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic;
+
+#[cfg(feature = "lxvideosink")]
+const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType =
+    GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo;
 
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
@@ -91,12 +96,7 @@ impl ObjectSubclass for UnifiedSinkBin {
             .build()
             .unwrap();
 
-        // Create the video sink element.
-        let vsink = gst::ElementFactory::make("waylandsink")
-            .name("waylandsink")
-            .build()
-            .ok();
-        let videosink = Mutex::new(vsink);
+        let videosink = Mutex::new(None);
 
         let render_type = Mutex::new(DEFAULT_RENDER_TYPE);
         // Return an instance of our struct
@@ -135,6 +135,11 @@ impl ObjectImpl for UnifiedSinkBin {
                     .nick("Render Type")
                     .blurb("the video output render type (VIDEO/GRAPHIC) to use (NULL = GRAPHIC via wayland sink)if you chanage the render type , must be set before using real sink element")
                     .readwrite()
+                    .build(),
+                glib::ParamSpecBoxed::builder::<gst::Structure>("resource-info")
+                    .nick("resource Info")
+                    .blurb("resource information about core-type, video-port, audio-port")
+                    .write_only()
                     .build(),
             ]
         });
@@ -181,6 +186,21 @@ impl ObjectImpl for UnifiedSinkBin {
                 );
                 *test_switch_sink = new_test_switch_sink;
                 *test_switch_sink_enable = new_test_switch_sink;
+            }
+            "resource-info" => {
+                let new_resource = value.get::<gst::Structure>().expect("resource info");
+
+                let cur_vsink = self.videosink.lock().unwrap();
+                let tmp_vsink = cur_vsink.deref();
+                match tmp_vsink {
+                    Some(vsink) => {
+                        // check if the property is found
+                        if let Some(_prop) = vsink.find_property("resource-info") {
+                            vsink.set_property("resource-info", &new_resource);
+                        }
+                    }
+                    None => {}
+                }
             }
             _ => unimplemented!(),
         }
@@ -242,18 +262,8 @@ impl ObjectImpl for UnifiedSinkBin {
         // Link valve to convert
         self.valve.link(&self.convert).unwrap();
 
-        // Make Mutex<Option<T>> to T
-        let cur_vsink = self.videosink.lock().unwrap();
-        let tmp_vsink = cur_vsink.deref();
-        match tmp_vsink {
-            Some(sink) => {
-                // Add the videosink element to the bin.
-                obj.add(sink).unwrap();
-
-                // Link convert to videosink
-                self.convert.link(sink).unwrap();
-            }
-            None => {}
+        if DEFAULT_RENDER_TYPE != GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeGraphic {
+            gst_unifiedsink_bin_create_sink_element(self);
         }
 
         // Then set the ghost pad targets to the corresponding pads of the valve element.
@@ -357,7 +367,11 @@ impl ElementImpl for UnifiedSinkBin {
 
         match transition {
             gst::StateChange::NullToReady => {}
-            gst::StateChange::ReadyToPaused => {}
+            gst::StateChange::ReadyToPaused => {
+                if self.videosink.lock().unwrap().is_none() {
+                    gst_unifiedsink_bin_create_sink_element(self);
+                }
+            }
             gst::StateChange::PausedToPlaying => {
                 //timer start
                 let t_sw_sink = self.test_switch_sink.lock().unwrap();

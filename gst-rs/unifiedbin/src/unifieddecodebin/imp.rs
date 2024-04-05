@@ -301,6 +301,11 @@ impl ObjectImpl for UnifiedDecodeBin {
                     .blurb("Req Decryptor Enabled?")
                     .readwrite()
                     .build(),
+                glib::ParamSpecBoxed::builder::<gst::Structure>("resource-info")
+                    .nick("resource Info")
+                    .blurb("resource information about core-type, video-port, audio-port")
+                    .write_only()
+                    .build(),
                 glib::ParamSpecUInt::builder("vdec-handle")
                     .nick("Vdec Handle")
                     .blurb("Vdec Handle")
@@ -494,6 +499,23 @@ impl ObjectImpl for UnifiedDecodeBin {
                 *req_decryptor = new_req_decryptor_enable;
                 if *req_decryptor == true {
                     gst_unifieddecode_bin_create_decryptor_element(self);
+                }
+            }
+            "resource-info" => {
+                let new_resource = value.get::<gst::Structure>().expect("resource info");
+
+                let curr_decoder = self.decoder.lock().unwrap();
+                let tmp_decoder = curr_decoder.deref();
+                match tmp_decoder {
+                    Some(decoder) => {
+                        // check if the property is found
+                        if let Some(_prop) = decoder.find_property("resource-info") {
+                            gst::info!(CAT, imp: self, "Decoder is already created so setting property: resource-info!");
+                            let _ =
+                                decoder.set_property("resource-info", new_resource);
+                        }
+                    }
+                    None => {}
                 }
             }
             "vdec-handle" => {
