@@ -40,6 +40,12 @@ const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType =
 const DEFAULT_RENDER_TYPE: GstUnifiedSinkRenderType =
     GstUnifiedSinkRenderType::GstUnifiedsinkRenderTypeVideo;
 
+#[cfg(feature = "videoconvert")]
+const DEFAULT_CONVERT: &str = "videoconvert";
+
+#[cfg(feature = "exynosvidconv")]
+const DEFAULT_CONVERT: &str = "exynosvidconv";
+
 static CAT: Lazy<gst::DebugCategory> = Lazy::new(|| {
     gst::DebugCategory::new(
         "rsunifiedsinkBin",
@@ -89,12 +95,18 @@ impl ObjectSubclass for UnifiedSinkBin {
             .unwrap();
 
         // Create the convert element.
-        let convert = gst::ElementFactory::make("videoconvert")
+        let convert = gst::ElementFactory::make(DEFAULT_CONVERT)
             .name("videoconvert-in-rsunifiedsinkbin")
-            .property("n-threads", 4_u32)
-            .property("chroma-mode", VideoChromaMode::None)
             .build()
             .unwrap();
+
+        if let Some(_prop) = convert.find_property("n-threads") {
+            convert.set_property("n-threads", 4_u32);
+        }
+
+        if let Some(_prop) = convert.find_property("chroma-mode") {
+            convert.set_property("chroma-mode", VideoChromaMode::None);
+        }
 
         let videosink = Mutex::new(None);
 
