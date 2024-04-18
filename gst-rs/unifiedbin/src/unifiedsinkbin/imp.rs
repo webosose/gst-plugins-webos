@@ -28,7 +28,6 @@ use std::time;
 use once_cell::sync::Lazy;
 
 use super::GstUnifiedSinkRenderType;
-use super::UnifiedSinkBinOutput;
 
 // This module contains the private implementation details of our element
 
@@ -153,6 +152,38 @@ impl ObjectImpl for UnifiedSinkBin {
                     .blurb("resource information about core-type, video-port, audio-port")
                     .write_only()
                     .build(),
+                glib::ParamSpecUInt64::builder("dropped-frames")
+                    .nick("Dropped Video Frames")
+                    .blurb("Get Dropped video frames")
+                    .minimum(0)
+                    .maximum(u64::MAX)
+                    .default_value(0)
+                    .read_only()
+                    .build(),
+                glib::ParamSpecUInt64::builder("non-flushable-dropped-frames")
+                    .nick("non-flushable Dropped Video Frames")
+                    .blurb("Get non-flushable Dropped video frames")
+                    .minimum(0)
+                    .maximum(u64::MAX)
+                    .default_value(0)
+                    .read_only()
+                    .build(),
+                glib::ParamSpecUInt64::builder("displayed-frames")
+                    .nick("Displayed Video Frames")
+                    .blurb("Get Displayed video frames")
+                    .minimum(0)
+                    .maximum(u64::MAX)
+                    .default_value(0)
+                    .read_only()
+                    .build(),
+                glib::ParamSpecUInt64::builder("non-flushable-displayed-frames")
+                    .nick("non-flushable Displayed Video Frames")
+                    .blurb("Get non-flushable Displayed video frames")
+                    .minimum(0)
+                    .maximum(u64::MAX)
+                    .default_value(0)
+                    .read_only()
+                    .build(),
             ]
         });
 
@@ -233,6 +264,40 @@ impl ObjectImpl for UnifiedSinkBin {
             "test-switch-sink" => {
                 let test_switch_sink = self.test_switch_sink.lock().unwrap();
                 test_switch_sink.to_value()
+            }
+            #[cfg(not(feature = "lxvideosink"))]
+            "dropped-frames" | "non-flushable-dropped-frames" => {
+                let dropped: u64 = gst_unifiedsink_bin_get_dropped_frame(self);
+                dropped.to_value()
+            }
+            #[cfg(not(feature = "lxvideosink"))]
+            "displayed-frames" | "non-flushable-displayed-frames" => {
+                let rendered: u64 = gst_unifiedsink_bin_get_rendered_frame(self);
+                rendered.to_value()
+            }
+            #[cfg(feature = "lxvideosink")]
+            "dropped-frames" => {
+                let tmp_dropped: u32 = self.videosink.lock().unwrap().as_ref().unwrap().property::<u32>("dropped-frames");
+                let dropped: u64 = tmp_dropped as u64;
+                dropped.to_value()
+            }
+            #[cfg(feature = "lxvideosink")]
+            "non-flushable-dropped-frames" => {
+                let tmp_non_flushable_dropped: u32 = self.videosink.lock().unwrap().as_ref().unwrap().property::<u32>("non-flushable-dropped-frames");
+                let non_flushable_dropped: u64 = tmp_non_flushable_dropped as u64;
+                non_flushable_dropped.to_value()
+            }
+            #[cfg(feature = "lxvideosink")]
+            "displayed-frames" => {
+                let tmp_rendered: u32 = self.videosink.lock().unwrap().as_ref().unwrap().property::<u32>("displayed-frames");
+                let rendered: u64 = tmp_rendered as u64;
+                rendered.to_value()
+            }
+            #[cfg(feature = "lxvideosink")]
+            "non-flushable-displayed-frames" => {
+                let tmp_non_flushable_rendered: u32 = self.videosink.lock().unwrap().as_ref().unwrap().property::<u32>("non-flushable-displayed-frames");
+                let non_flushable_rendered: u64 = tmp_non_flushable_rendered as u64;
+                non_flushable_rendered.to_value()
             }
             _ => unimplemented!(),
         }
@@ -559,4 +624,24 @@ fn gst_unifiedsink_bin_create_sink_element(sinkbin: &UnifiedSinkBin) -> bool {
     gst::debug!(CAT, imp: sinkbin, "Creation successful for { } element in rsunifiedsinkbin", sink_name);
     sinkbin.valve.set_property("drop", false);
     return ret;
+}
+
+#[cfg(not(feature = "lxvideosink"))]
+fn gst_unifiedsink_bin_get_rendered_frame(sinkbin: &UnifiedSinkBin)  -> u64 {
+    if sinkbin.videosink.lock().unwrap().is_some() {
+        let stats = sinkbin.videosink.lock().unwrap().as_ref().unwrap().property::<gst::Structure>("stats");
+        return stats.get::<u64>("rendered").unwrap_or(0);
+    }
+    gst::warning!(CAT, imp: sinkbin, "rendered field is NOT exist from GstStructure. Can't get rendered frame count from sink!");
+    return 0;
+}
+
+#[cfg(not(feature = "lxvideosink"))]
+fn gst_unifiedsink_bin_get_dropped_frame(sinkbin: &UnifiedSinkBin)  -> u64 {
+    if sinkbin.videosink.lock().unwrap().is_some() {
+        let stats = sinkbin.videosink.lock().unwrap().as_ref().unwrap().property::<gst::Structure>("stats");
+        return stats.get::<u64>("dropped").unwrap_or(0);
+    }
+    gst::warning!(CAT, imp: sinkbin, "dropped field is NOT exist from GstStructure. Can't get dropped frame count from sink!");
+    return 0;
 }
