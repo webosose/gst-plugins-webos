@@ -207,11 +207,15 @@ impl ObjectImpl for UnifiedSinkBin {
                     new_render_type
                 );
 
-                if *render_type != new_render_type {
-                    *render_type = new_render_type;
-                    drop(render_type);
-                    gst_unifiedsink_bin_create_sink_element(self);
+                if *render_type == new_render_type {
+                    if self.videosink.lock().unwrap().is_some() {
+                        return;
+                    }
                 }
+
+                *render_type = new_render_type;
+                drop(render_type);
+                gst_unifiedsink_bin_create_sink_element(self);
             }
             "test-switch-sink" => {
                 let mut test_switch_sink = self.test_switch_sink.lock().unwrap();
