@@ -60,6 +60,7 @@ pub struct UnifiedSinkBin {
     videosink: Mutex<Option<gst::Element>>,
     sinkpad: gst::GhostPad,
     render_type: Mutex<GstUnifiedSinkRenderType>,
+    is_sync: Mutex<bool>,
     test_switch_sink: Mutex<bool>,
     test_switch_sink_enable: Mutex<bool>,
     test_thread_start: Mutex<bool>,
@@ -117,6 +118,7 @@ impl ObjectSubclass for UnifiedSinkBin {
             videosink,
             sinkpad,
             render_type,
+            is_sync: Mutex::new(true),
             test_switch_sink: Mutex::new(false),
             test_switch_sink_enable: Mutex::new(false),
             test_thread_start: Mutex::new(false),
@@ -184,6 +186,11 @@ impl ObjectImpl for UnifiedSinkBin {
                     .default_value(0)
                     .read_only()
                     .build(),
+                glib::ParamSpecBoolean::builder("sync")
+                    .nick("Sync")
+                    .blurb("Sync on the clock")
+                    .readwrite()
+                    .build(),
             ]
         });
 
@@ -249,6 +256,30 @@ impl ObjectImpl for UnifiedSinkBin {
                     None => {}
                 }
             }
+            "sync" => {
+                let mut is_sync = self.is_sync.lock().unwrap();
+                let new_is_sync = value.get::<bool>().expect("Sync");
+                gst::info!(
+                    CAT,
+                    imp: self,
+                    "sync modified from {:?} to {:?}",
+                    is_sync,
+                    new_is_sync
+                );
+                *is_sync = new_is_sync;
+                let cur_videosink = self.videosink.lock().unwrap();
+                let tmp_videosink = cur_videosink.deref();
+                match tmp_videosink {
+                    Some(videosink) => {
+                        // check if the property is found
+                        if let Some(_prop) = videosink.find_property("sync") {
+                            gst::debug!(CAT, imp: self, "Set sync to videosink {}",new_is_sync);
+                            videosink.set_property("sync", new_is_sync);
+                        }
+                    }
+                    None => {}
+                }
+            }
             _ => unimplemented!(),
         }
     }
@@ -302,6 +333,10 @@ impl ObjectImpl for UnifiedSinkBin {
                 let tmp_non_flushable_rendered: u32 = self.videosink.lock().unwrap().as_ref().unwrap().property::<u32>("non-flushable-displayed-frames");
                 let non_flushable_rendered: u64 = tmp_non_flushable_rendered as u64;
                 non_flushable_rendered.to_value()
+            }
+            "sync" => {
+                let is_sync = self.is_sync.lock().unwrap();
+                is_sync.to_value()
             }
             _ => unimplemented!(),
         }
